@@ -1,0 +1,3708 @@
+-- Orion Library Universal Compatibility Update with Music System
+-- Tüm executor'larda çalışacak şekilde optimize edilmiştir
+
+--[[
+Orion Library
+
+MultiSelect Element Kullanımı:
+    local MultiSelect = Tab:AddMultiSelect({
+        Name = "MultiSelect Örneği",
+        Options = {"Seçenek 1", "Seçenek 2", "Seçenek 3"},
+        Default = {"Seçenek 1"}, -- Varsayılan seçili değerler (opsiyonel)
+        Flag = "multiSelectFlag", -- Flag değeri (opsiyonel)
+        Callback = function(Value)
+            -- Value bir tablo olarak seçili değerleri içerir
+            print("Seçili Değerler:", table.concat(Value, ", "))
+        end    
+    })
+
+    -- Fonksiyonlar:
+    MultiSelect:Refresh(Options, true) -- Seçenekleri günceller (true parametresi mevcut seçimleri temizler)
+    MultiSelect:Set({"Seçenek 1", "Seçenek 3"}) -- Seçili değerleri ayarlar
+
+Music System Usage:
+    local Window = OrionLib:MakeWindow({
+        Name = "My Script Hub",
+        Music = true, -- Müzik sistemini etkinleştir
+        SaveConfig = true,
+        ConfigFolder = "MyScript"
+    })
+]]
+
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+local HttpService = game:GetService("HttpService")
+local SoundService = game:GetService("SoundService")
+
+-- Music System Variables
+local MusicSystem = {
+    CurrentSound = nil,
+    IsPlaying = false,
+    IsPaused = false,
+    Volume = 0.5,
+    CurrentTrack = nil,
+    MusicPanel = nil,
+    MusicList = {
+        {Name = "Chill Vibes", ID = "rbxassetid://1837879082"},
+        {Name = "Epic Battle", ID = "rbxassetid://1839246711"},
+        {Name = "Relaxing Piano", ID = "rbxassetid://1836432637"},
+        {Name = "Electronic Beat", ID = "rbxassetid://1838457617"},
+        {Name = "Ambient Space", ID = "rbxassetid://1837879082"},
+        {Name = "Synthwave Dreams", ID = "rbxassetid://1840847339"},
+        {Name = "Lo-Fi Study", ID = "rbxassetid://1841234567"},
+        {Name = "Cyberpunk Nights", ID = "rbxassetid://1842345678"},
+        {Name = "Future Bass", ID = "rbxassetid://1843456789"},
+        {Name = "Retro Wave", ID = "rbxassetid://1844567890"}
+    }
+}
+
+-- UISizeConstraint güvenlik fonksiyonu - MaxSize < MinSize hatası için
+local function SafeUISizeConstraint(parent, minX, minY, maxX, maxY)
+    -- Minimum değerler her zaman maximum değerlerden küçük olmalı
+    if maxX < minX then maxX = minX end
+    if maxY < minY then maxY = minY end
+    
+    local constraint = Instance.new("UISizeConstraint")
+    constraint.MinSize = Vector2.new(minX, minY)
+    constraint.MaxSize = Vector2.new(maxX, maxY)
+    constraint.Parent = parent
+    return constraint
+end
+
+-- ImageButton için yardımcı fonksiyonlar
+local function HSVtoRGB(h, s, v)
+    local r, g, b
+    local i = math.floor(h * 6)
+    local f = h * 6 - i
+    local p = v * (1 - s)
+    local q = v * (1 - f * s)
+    local t = v * (1 - (1 - f) * s)
+    
+    i = i % 6
+    
+    if i == 0 then r, g, b = v, t, p
+    elseif i == 1 then r, g, b = q, v, p
+    elseif i == 2 then r, g, b = p, v, t
+    elseif i == 3 then r, g, b = p, q, v
+    elseif i == 4 then r, g, b = t, p, v
+    elseif i == 5 then r, g, b = v, p, q
+    end
+    
+    return math.floor(r * 255), math.floor(g * 255), math.floor(b * 255)
+end
+
+-- ImageButton oluşturma ve yapılandırma fonksiyonları
+local function createImageButton(playerGui)
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    screenGui.Parent = playerGui
+    
+    local imageButton = Instance.new("ImageButton")
+    imageButton.BorderSizePixel = 0
+    imageButton.ScaleType = Enum.ScaleType.Fit
+    imageButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    imageButton.Image = "rbxassetid://111073133971859"
+    imageButton.Size = UDim2.new(0, 35, 0, 35)
+    imageButton.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    imageButton.Position = UDim2.new(0.35744, 0, 0.26145, 0)
+    imageButton.Parent = screenGui
+    
+    local uiCorner = Instance.new("UICorner")
+    uiCorner.CornerRadius = UDim.new(1, 0)
+    uiCorner.Parent = imageButton
+    
+    local uiStroke = Instance.new("UIStroke")
+    uiStroke.Parent = imageButton
+    
+    return imageButton, uiStroke
+end
+
+local function setupDragging(guiObject)
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+    
+    local function onInputBegan(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = guiObject.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end
+    
+    local function onInputChanged(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            local newPos = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+            guiObject.Position = newPos
+        end
+    end
+    
+    guiObject.InputBegan:Connect(onInputBegan)
+    UserInputService.InputChanged:Connect(onInputChanged)
+end
+
+local function setupRainbowStroke(uiStroke)
+    local hue = 0
+    local hueSpeed = 0.04
+    local thicknessMin = 1
+    local thicknessMax = 3.5
+    local thicknessSpeed = 0.3
+    local direction = 1
+    
+    task.spawn(function()
+        while uiStroke.Parent do
+            hue = (hue + hueSpeed) % 1
+            local r, g, b = HSVtoRGB(hue, 1, 1)
+            uiStroke.Color = Color3.fromRGB(r, g, b)
+            
+            uiStroke.Thickness = uiStroke.Thickness + (thicknessSpeed * direction)
+            
+            if uiStroke.Thickness >= thicknessMax then
+                direction = -1
+            elseif uiStroke.Thickness <= thicknessMin then
+                direction = 1
+            end
+            
+            task.wait(0.03)
+        end
+    end)
+end
+
+-- Music System Functions
+local function CreateMusicSystem(MainWindow, WindowConfig)
+    if not WindowConfig.Music then return end
+    
+    -- Music Panel Container
+    local MusicPanel = Instance.new("Frame")
+    MusicPanel.Name = "MusicPanel"
+    MusicPanel.Size = UDim2.new(0, 240, 0, 320) -- Daha küçük boyut
+    MusicPanel.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    MusicPanel.BackgroundTransparency = 0.05
+    MusicPanel.BorderSizePixel = 0
+    MusicPanel.Visible = false
+    MusicPanel.ZIndex = 1000
+    
+    -- Store reference
+    MusicSystem.MusicPanel = MusicPanel
+    
+    -- Position music panel to the right of MainWindow
+    local function UpdateMusicPanelPosition()
+        if MainWindow and MainWindow.Parent then
+            local pos = MainWindow.AbsolutePosition
+            local size = MainWindow.AbsoluteSize
+            MusicPanel.Position = UDim2.new(0, pos.X + size.X + 15, 0, pos.Y)
+        end
+    end
+    
+    -- Music Panel Corner
+    local MusicCorner = Instance.new("UICorner")
+    MusicCorner.CornerRadius = UDim.new(0, 15)
+    MusicCorner.Parent = MusicPanel
+    
+    -- Music Panel Stroke with animated glow
+    local MusicStroke = Instance.new("UIStroke")
+    MusicStroke.Color = Color3.fromRGB(100, 150, 255)
+    MusicStroke.Thickness = 2.5
+    MusicStroke.Transparency = 0.2
+    MusicStroke.Parent = MusicPanel
+    
+    -- Animated glow effect for music panel
+    spawn(function()
+        local glowIntensity = 0.2
+        local direction = 1
+        while MusicPanel and MusicPanel.Parent do
+            glowIntensity = glowIntensity + (0.015 * direction)
+            if glowIntensity >= 0.7 then
+                direction = -1
+            elseif glowIntensity <= 0.2 then
+                direction = 1
+            end
+            if MusicStroke and MusicStroke.Parent then
+                MusicStroke.Transparency = 1 - glowIntensity
+            end
+            wait(0.08)
+        end
+    end)
+    
+    -- Music Panel Header
+    local MusicHeader = Instance.new("Frame")
+    MusicHeader.Name = "Header"
+    MusicHeader.Size = UDim2.new(1, 0, 0, 50)
+    MusicHeader.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    MusicHeader.BorderSizePixel = 0
+    MusicHeader.Parent = MusicPanel
+    
+    local HeaderCorner = Instance.new("UICorner")
+    HeaderCorner.CornerRadius = UDim.new(0, 15)
+    HeaderCorner.Parent = MusicHeader
+    
+    -- Music Title with animated text
+    local MusicTitle = Instance.new("TextLabel")
+    MusicTitle.Name = "Title"
+    MusicTitle.Size = UDim2.new(1, -60, 1, 0)
+    MusicTitle.Position = UDim2.new(0, 20, 0, 0)
+    MusicTitle.BackgroundTransparency = 1
+    MusicTitle.Text = "🎵 Music Player"
+    MusicTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MusicTitle.TextSize = 20
+    MusicTitle.Font = Enum.Font.GothamBold
+    MusicTitle.TextXAlignment = Enum.TextXAlignment.Left
+    MusicTitle.Parent = MusicHeader
+    
+    -- Close Button for Music Panel
+    local MusicCloseBtn = Instance.new("TextButton")
+    MusicCloseBtn.Name = "CloseBtn"
+    MusicCloseBtn.Size = UDim2.new(0, 35, 0, 35)
+    MusicCloseBtn.Position = UDim2.new(1, -45, 0, 7)
+    MusicCloseBtn.BackgroundColor3 = Color3.fromRGB(255, 70, 70)
+    MusicCloseBtn.Text = "✕"
+    MusicCloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MusicCloseBtn.TextSize = 16
+    MusicCloseBtn.Font = Enum.Font.GothamBold
+    MusicCloseBtn.BorderSizePixel = 0
+    MusicCloseBtn.Parent = MusicHeader
+    
+    local CloseBtnCorner = Instance.new("UICorner")
+    CloseBtnCorner.CornerRadius = UDim.new(1, 0)
+    CloseBtnCorner.Parent = MusicCloseBtn
+    
+    -- Current Track Display
+    local CurrentTrackFrame = Instance.new("Frame")
+    CurrentTrackFrame.Name = "CurrentTrack"
+    CurrentTrackFrame.Size = UDim2.new(1, -20, 0, 40) -- Daha ince
+    CurrentTrackFrame.Position = UDim2.new(0, 10, 0, 50)
+    CurrentTrackFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+    CurrentTrackFrame.BorderSizePixel = 0
+    CurrentTrackFrame.Parent = MusicPanel
+    
+    local CurrentTrackCorner = Instance.new("UICorner")
+    CurrentTrackCorner.CornerRadius = UDim.new(0, 8)
+    CurrentTrackCorner.Parent = CurrentTrackFrame
+    
+    local CurrentTrackStroke = Instance.new("UIStroke")
+    CurrentTrackStroke.Color = Color3.fromRGB(50, 50, 50)
+    CurrentTrackStroke.Thickness = 1
+    CurrentTrackStroke.Parent = CurrentTrackFrame
+    
+    local CurrentTrackLabel = Instance.new("TextLabel")
+    CurrentTrackLabel.Name = "TrackLabel"
+    CurrentTrackLabel.Size = UDim2.new(1, -20, 1, 0)
+    CurrentTrackLabel.Position = UDim2.new(0, 10, 0, 0)
+    CurrentTrackLabel.BackgroundTransparency = 1
+    CurrentTrackLabel.Text = "♪ No track selected"
+    CurrentTrackLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    CurrentTrackLabel.TextSize = 12 -- Daha küçük font
+    CurrentTrackLabel.Font = Enum.Font.GothamSemibold
+    CurrentTrackLabel.TextXAlignment = Enum.TextXAlignment.Left
+    CurrentTrackLabel.TextWrapped = true
+    CurrentTrackLabel.Parent = CurrentTrackFrame
+    
+    -- Music List ScrollFrame
+    local MusicScrollFrame = Instance.new("ScrollingFrame")
+    MusicScrollFrame.Name = "MusicList"
+    MusicScrollFrame.Size = UDim2.new(1, -20, 0, 120) -- Daha küçük
+    MusicScrollFrame.Position = UDim2.new(0, 10, 0, 100)
+    MusicScrollFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+    MusicScrollFrame.BorderSizePixel = 0
+    MusicScrollFrame.ScrollBarThickness = 4
+    MusicScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 150, 255)
+    MusicScrollFrame.Parent = MusicPanel
+    
+    local ScrollCorner = Instance.new("UICorner")
+    ScrollCorner.CornerRadius = UDim.new(0, 10)
+    ScrollCorner.Parent = MusicScrollFrame
+    
+    local ScrollStroke = Instance.new("UIStroke")
+    ScrollStroke.Color = Color3.fromRGB(50, 50, 50)
+    ScrollStroke.Thickness = 1
+    ScrollStroke.Parent = MusicScrollFrame
+    
+    local MusicListLayout = Instance.new("UIListLayout")
+    MusicListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    MusicListLayout.Padding = UDim.new(0, 8)
+    MusicListLayout.Parent = MusicScrollFrame
+    
+    local MusicListPadding = Instance.new("UIPadding")
+    MusicListPadding.PaddingTop = UDim.new(0, 8)
+    MusicListPadding.PaddingBottom = UDim.new(0, 8)
+    MusicListPadding.PaddingLeft = UDim.new(0, 8)
+    MusicListPadding.PaddingRight = UDim.new(0, 8)
+    MusicListPadding.Parent = MusicScrollFrame
+    
+    -- Control Buttons Container
+    local ControlsFrame = Instance.new("Frame")
+    ControlsFrame.Name = "Controls"
+    ControlsFrame.Size = UDim2.new(1, -20, 0, 50) -- Daha küçük
+    ControlsFrame.Position = UDim2.new(0, 10, 0, 230)
+    ControlsFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    ControlsFrame.BorderSizePixel = 0
+    ControlsFrame.Parent = MusicPanel
+    
+    local ControlsCorner = Instance.new("UICorner")
+    ControlsCorner.CornerRadius = UDim.new(0, 8)
+    ControlsCorner.Parent = ControlsFrame
+    
+    local ControlsStroke = Instance.new("UIStroke")
+    ControlsStroke.Color = Color3.fromRGB(50, 50, 50)
+    ControlsStroke.Thickness = 1
+    ControlsStroke.Parent = ControlsFrame
+    
+    -- Previous Button
+    local PrevBtn = Instance.new("TextButton")
+    PrevBtn.Name = "PrevBtn"
+    PrevBtn.Size = UDim2.new(0, 35, 0, 35)
+    PrevBtn.Position = UDim2.new(0, 10, 0, 7)
+    PrevBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    PrevBtn.Text = "⏮"
+    PrevBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PrevBtn.TextSize = 14
+    PrevBtn.Font = Enum.Font.GothamBold
+    PrevBtn.BorderSizePixel = 0
+    PrevBtn.Parent = ControlsFrame
+    
+    local PrevBtnCorner = Instance.new("UICorner")
+    PrevBtnCorner.CornerRadius = UDim.new(0, 8)
+    PrevBtnCorner.Parent = PrevBtn
+    
+    -- Play Button
+    local PlayBtn = Instance.new("TextButton")
+    PlayBtn.Name = "PlayBtn"
+    PlayBtn.Size = UDim2.new(0, 40, 0, 35)
+    PlayBtn.Position = UDim2.new(0, 50, 0, 7)
+    PlayBtn.BackgroundColor3 = Color3.fromRGB(40, 200, 80)
+    PlayBtn.Text = "▶"
+    PlayBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PlayBtn.TextSize = 16
+    PlayBtn.Font = Enum.Font.GothamBold
+    PlayBtn.BorderSizePixel = 0
+    PlayBtn.Parent = ControlsFrame
+    
+    local PlayBtnCorner = Instance.new("UICorner")
+    PlayBtnCorner.CornerRadius = UDim.new(0, 8)
+    PlayBtnCorner.Parent = PlayBtn
+    
+    -- Next Button
+    local NextBtn = Instance.new("TextButton")
+    NextBtn.Name = "NextBtn"
+    NextBtn.Size = UDim2.new(0, 35, 0, 35)
+    NextBtn.Position = UDim2.new(0, 95, 0, 7)
+    NextBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    NextBtn.Text = "⏭"
+    NextBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    NextBtn.TextSize = 14
+    NextBtn.Font = Enum.Font.GothamBold
+    NextBtn.BorderSizePixel = 0
+    NextBtn.Parent = ControlsFrame
+    
+    local NextBtnCorner = Instance.new("UICorner")
+    NextBtnCorner.CornerRadius = UDim.new(0, 8)
+    NextBtnCorner.Parent = NextBtn
+    
+    -- Stop Button
+    local StopBtn = Instance.new("TextButton")
+    StopBtn.Name = "StopBtn"
+    StopBtn.Size = UDim2.new(0, 35, 0, 35)
+    StopBtn.Position = UDim2.new(0, 135, 0, 7)
+    StopBtn.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+    StopBtn.Text = "⏹"
+    StopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    StopBtn.TextSize = 14
+    StopBtn.Font = Enum.Font.GothamBold
+    StopBtn.BorderSizePixel = 0
+    StopBtn.Parent = ControlsFrame
+    
+    local StopBtnCorner = Instance.new("UICorner")
+    StopBtnCorner.CornerRadius = UDim.new(0, 8)
+    StopBtnCorner.Parent = StopBtn
+    
+    -- Shuffle Button
+    local ShuffleBtn = Instance.new("TextButton")
+    ShuffleBtn.Name = "ShuffleBtn"
+    ShuffleBtn.Size = UDim2.new(0, 35, 0, 35)
+    ShuffleBtn.Position = UDim2.new(0, 175, 0, 7)
+    ShuffleBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+    ShuffleBtn.Text = "🔀"
+    ShuffleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ShuffleBtn.TextSize = 12
+    ShuffleBtn.Font = Enum.Font.GothamBold
+    ShuffleBtn.BorderSizePixel = 0
+    ShuffleBtn.Parent = ControlsFrame
+    
+    local ShuffleBtnCorner = Instance.new("UICorner")
+    ShuffleBtnCorner.CornerRadius = UDim.new(0, 10)
+    ShuffleBtnCorner.Parent = ShuffleBtn
+    
+    -- Volume and Progress Control
+    local VolumeFrame = Instance.new("Frame")
+    VolumeFrame.Name = "VolumeFrame"
+    VolumeFrame.Size = UDim2.new(1, -20, 0, 40) -- Daha küçük
+    VolumeFrame.Position = UDim2.new(0, 10, 0, 290)
+    VolumeFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    VolumeFrame.BorderSizePixel = 0
+    VolumeFrame.Parent = MusicPanel
+    
+    local VolumeCorner = Instance.new("UICorner")
+    VolumeCorner.CornerRadius = UDim.new(0, 8)
+    VolumeCorner.Parent = VolumeFrame
+    
+    local VolumeStroke = Instance.new("UIStroke")
+    VolumeStroke.Color = Color3.fromRGB(50, 50, 50)
+    VolumeStroke.Thickness = 1
+    VolumeStroke.Parent = VolumeFrame
+    
+    -- Volume Label
+    local VolumeLabel = Instance.new("TextLabel")
+    VolumeLabel.Name = "VolumeLabel"
+    VolumeLabel.Size = UDim2.new(0, 80, 0, 20)
+    VolumeLabel.Position = UDim2.new(0, 10, 0, 5)
+    VolumeLabel.BackgroundTransparency = 1
+    VolumeLabel.Text = "🔊 50%"
+    VolumeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    VolumeLabel.TextSize = 11
+    VolumeLabel.Font = Enum.Font.GothamSemibold
+    VolumeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    VolumeLabel.Parent = VolumeFrame
+    
+    -- Volume Slider
+    local VolumeSlider = Instance.new("Frame")
+    VolumeSlider.Name = "VolumeSlider"
+    VolumeSlider.Size = UDim2.new(0.4, 0, 0, 6)
+    VolumeSlider.Position = UDim2.new(0.45, 0, 0.5, -3)
+    VolumeSlider.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    VolumeSlider.BorderSizePixel = 0
+    VolumeSlider.Parent = VolumeFrame
+    
+    local VolumeSliderCorner = Instance.new("UICorner")
+    VolumeSliderCorner.CornerRadius = UDim.new(1, 0)
+    VolumeSliderCorner.Parent = VolumeSlider
+    
+    -- Volume Fill
+    local VolumeFill = Instance.new("Frame")
+    VolumeFill.Name = "VolumeFill"
+    VolumeFill.Size = UDim2.new(0.5, 0, 1, 0)
+    VolumeFill.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+    VolumeFill.BorderSizePixel = 0
+    VolumeFill.Parent = VolumeSlider
+    
+    local VolumeFillCorner = Instance.new("UICorner")
+    VolumeFillCorner.CornerRadius = UDim.new(1, 0)
+    VolumeFillCorner.Parent = VolumeFill
+    
+    -- Volume Knob
+    local VolumeKnob = Instance.new("Frame")
+    VolumeKnob.Name = "VolumeKnob"
+    VolumeKnob.Size = UDim2.new(0, 16, 0, 16)
+    VolumeKnob.Position = UDim2.new(0.5, -8, 0.5, -8)
+    VolumeKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    VolumeKnob.BorderSizePixel = 0
+    VolumeKnob.Parent = VolumeSlider
+    
+    local VolumeKnobCorner = Instance.new("UICorner")
+    VolumeKnobCorner.CornerRadius = UDim.new(1, 0)
+    VolumeKnobCorner.Parent = VolumeKnob
+    
+    -- Progress Slider
+    local ProgressSlider = Instance.new("Frame")
+    ProgressSlider.Name = "ProgressSlider"
+    ProgressSlider.Size = UDim2.new(0.4, 0, 0, 6)
+    ProgressSlider.Position = UDim2.new(0.45, 0, 0.5, 8)
+    ProgressSlider.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    ProgressSlider.BorderSizePixel = 0
+    ProgressSlider.Parent = VolumeFrame
+    
+    local ProgressSliderCorner = Instance.new("UICorner")
+    ProgressSliderCorner.CornerRadius = UDim.new(1, 0)
+    ProgressSliderCorner.Parent = ProgressSlider
+    
+    -- Progress Fill
+    local ProgressFill = Instance.new("Frame")
+    ProgressFill.Name = "ProgressFill"
+    ProgressFill.Size = UDim2.new(0, 0, 1, 0)
+    ProgressFill.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+    ProgressFill.BorderSizePixel = 0
+    ProgressFill.Parent = ProgressSlider
+    
+    local ProgressFillCorner = Instance.new("UICorner")
+    ProgressFillCorner.CornerRadius = UDim.new(1, 0)
+    ProgressFillCorner.Parent = ProgressFill
+    
+    -- Progress Knob
+    local ProgressKnob = Instance.new("Frame")
+    ProgressKnob.Name = "ProgressKnob"
+    ProgressKnob.Size = UDim2.new(0, 16, 0, 16)
+    ProgressKnob.Position = UDim2.new(0, -8, 0.5, -8)
+    ProgressKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    ProgressKnob.BorderSizePixel = 0
+    ProgressKnob.Parent = ProgressSlider
+    
+    local ProgressKnobCorner = Instance.new("UICorner")
+    ProgressKnobCorner.CornerRadius = UDim.new(1, 0)
+    ProgressKnobCorner.Parent = ProgressKnob
+    
+    -- Time Label
+    local TimeLabel = Instance.new("TextLabel")
+    TimeLabel.Name = "TimeLabel"
+    TimeLabel.Size = UDim2.new(0, 80, 0, 20)
+    TimeLabel.Position = UDim2.new(1, -90, 0, 5)
+    TimeLabel.BackgroundTransparency = 1
+    TimeLabel.Text = "0:00 / 0:00"
+    TimeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    TimeLabel.TextSize = 11
+    TimeLabel.Font = Enum.Font.GothamSemibold
+    TimeLabel.TextXAlignment = Enum.TextXAlignment.Right
+    TimeLabel.Parent = VolumeFrame
+    
+    -- Music Toggle Button (next to minimize button)
+    local MusicToggleBtn = Instance.new("TextButton")
+    MusicToggleBtn.Name = "MusicToggleBtn"
+    MusicToggleBtn.Size = UDim2.new(0, 30, 0, 30)
+    MusicToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25) -- Minimize button rengi
+    MusicToggleBtn.Text = "🎵"
+    MusicToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MusicToggleBtn.TextSize = 14
+    MusicToggleBtn.Font = Enum.Font.GothamBold
+    MusicToggleBtn.BorderSizePixel = 0
+    
+    local MusicToggleCorner = Instance.new("UICorner")
+    MusicToggleCorner.CornerRadius = UDim.new(1, 0)
+    MusicToggleCorner.Parent = MusicToggleBtn
+    
+    -- Add music toggle button to TopBar
+    if MainWindow:FindFirstChild("TopBar") then
+        local TopBar = MainWindow.TopBar
+        MusicToggleBtn.Parent = TopBar
+        
+        -- Position next to minimize button
+        local MinimizeContainer = TopBar:FindFirstChild("Frame")
+        if MinimizeContainer then
+            -- Adjust container size for music button
+            MinimizeContainer.Size = UDim2.new(0, 135, 0, 30) -- 3 buton için genişletildi
+            MinimizeContainer.Position = UDim2.new(1, -155, 0, 5)
+            MusicToggleBtn.Position = UDim2.new(0, 5, 0, 0) -- Sol tarafta
+        end
+    end
+    
+    -- Music System Variables
+    local CurrentTrackIndex = 1
+    
+    -- Music System Functions
+    local function PlayMusic(musicData)
+        if MusicSystem.CurrentSound then
+            MusicSystem.CurrentSound:Stop()
+            MusicSystem.CurrentSound:Destroy()
+        end
+        
+        local sound = Instance.new("Sound")
+        sound.SoundId = musicData.ID
+        sound.Volume = MusicSystem.Volume
+        sound.Looped = true
+        sound.Parent = SoundService
+        
+        MusicSystem.CurrentSound = sound
+        MusicSystem.CurrentTrack = musicData
+        MusicSystem.IsPlaying = true
+        MusicSystem.IsPaused = false
+        
+        sound:Play()
+        
+        -- Update UI
+        PlayBtn.Text = "⏸"
+        PlayBtn.BackgroundColor3 = Color3.fromRGB(255, 200, 40)
+        CurrentTrackLabel.Text = "♪ " .. musicData.Name
+        
+        -- Add glow effect to current track
+        TweenService:Create(CurrentTrackFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
+            BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        }):Play()
+        
+        -- Update time display
+        TimeLabel.Text = "0:00 / 0:00"
+    end
+    
+    local function PauseMusic()
+        if MusicSystem.CurrentSound and MusicSystem.IsPlaying then
+            if MusicSystem.IsPaused then
+                MusicSystem.CurrentSound:Resume()
+                MusicSystem.IsPaused = false
+                PlayBtn.Text = "⏸"
+                PlayBtn.BackgroundColor3 = Color3.fromRGB(255, 200, 40)
+                CurrentTrackLabel.Text = "♪ " .. (MusicSystem.CurrentTrack and MusicSystem.CurrentTrack.Name or "Unknown")
+            else
+                MusicSystem.CurrentSound:Pause()
+                MusicSystem.IsPaused = true
+                PlayBtn.Text = "▶"
+                PlayBtn.BackgroundColor3 = Color3.fromRGB(40, 200, 80)
+                CurrentTrackLabel.Text = "⏸ " .. (MusicSystem.CurrentTrack and MusicSystem.CurrentTrack.Name or "Unknown")
+            end
+        end
+    end
+    
+    local function StopMusic()
+        if MusicSystem.CurrentSound then
+            MusicSystem.CurrentSound:Stop()
+            MusicSystem.IsPlaying = false
+            MusicSystem.IsPaused = false
+            PlayBtn.Text = "▶"
+            PlayBtn.BackgroundColor3 = Color3.fromRGB(40, 200, 80)
+            CurrentTrackLabel.Text = "♪ No track selected"
+            TimeLabel.Text = "0:00 / 0:00"
+            ProgressFill.Size = UDim2.new(0, 0, 1, 0)
+            ProgressKnob.Position = UDim2.new(0, -8, 0.5, -8)
+            
+            -- Remove glow effect
+            TweenService:Create(CurrentTrackFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
+                BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+            }):Play()
+        end
+    end
+    
+    local function NextTrack()
+        if #MusicSystem.MusicList > 0 then
+            CurrentTrackIndex = (CurrentTrackIndex % #MusicSystem.MusicList) + 1
+            local nextTrack = MusicSystem.MusicList[CurrentTrackIndex]
+            PlayMusic(nextTrack)
+            
+            -- Update selection visual
+            for _, child in pairs(MusicScrollFrame:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+                end
+            end
+            
+            -- Highlight the current track
+            local currentItem = MusicScrollFrame:FindFirstChild("MusicItem" .. CurrentTrackIndex)
+            if currentItem then
+                currentItem.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+            end
+        end
+    end
+    
+    local function PreviousTrack()
+        if #MusicSystem.MusicList > 0 then
+            CurrentTrackIndex = CurrentTrackIndex - 1
+            if CurrentTrackIndex < 1 then
+                CurrentTrackIndex = #MusicSystem.MusicList
+            end
+            local prevTrack = MusicSystem.MusicList[CurrentTrackIndex]
+            PlayMusic(prevTrack)
+            
+            -- Update selection visual
+            for _, child in pairs(MusicScrollFrame:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+                end
+            end
+            
+            -- Highlight the current track
+            local currentItem = MusicScrollFrame:FindFirstChild("MusicItem" .. CurrentTrackIndex)
+            if currentItem then
+                currentItem.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+            end
+        end
+    end
+    
+    local function ShuffleMusic()
+        if #MusicSystem.MusicList > 0 then
+            local randomIndex = math.random(1, #MusicSystem.MusicList)
+            CurrentTrackIndex = randomIndex
+            local randomTrack = MusicSystem.MusicList[randomIndex]
+            PlayMusic(randomTrack)
+            
+            -- Update selection visual
+            for _, child in pairs(MusicScrollFrame:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+                end
+            end
+            
+            -- Highlight the shuffled track
+            local shuffledItem = MusicScrollFrame:FindFirstChild("MusicItem" .. randomIndex)
+            if shuffledItem then
+                shuffledItem.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+            end
+        end
+    end
+    
+    local function UpdateVolume(value)
+        MusicSystem.Volume = math.clamp(value, 0, 1)
+        if MusicSystem.CurrentSound then
+            MusicSystem.CurrentSound.Volume = MusicSystem.Volume
+        end
+        
+        VolumeFill.Size = UDim2.new(MusicSystem.Volume, 0, 1, 0)
+        VolumeKnob.Position = UDim2.new(MusicSystem.Volume, -10, 0.5, -10)
+        VolumeLabel.Text = "🔊 Volume: " .. math.floor(MusicSystem.Volume * 100) .. "%"
+    end
+    
+    -- Create Music List Items
+    for i, musicData in ipairs(MusicSystem.MusicList) do
+        local MusicItem = Instance.new("TextButton")
+        MusicItem.Name = "MusicItem" .. i
+        MusicItem.Size = UDim2.new(1, -16, 0, 30) -- Daha küçük
+        MusicItem.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        MusicItem.Text = ""
+        MusicItem.BorderSizePixel = 0
+        MusicItem.Parent = MusicScrollFrame
+        
+        local ItemCorner = Instance.new("UICorner")
+        ItemCorner.CornerRadius = UDim.new(0, 6)
+        ItemCorner.Parent = MusicItem
+        
+        local ItemStroke = Instance.new("UIStroke")
+        ItemStroke.Color = Color3.fromRGB(50, 50, 50)
+        ItemStroke.Thickness = 1
+        ItemStroke.Parent = MusicItem
+        
+        -- Music icon
+        local MusicIcon = Instance.new("TextLabel")
+        MusicIcon.Size = UDim2.new(0, 20, 0, 20)
+        MusicIcon.Position = UDim2.new(0, 5, 0, 5)
+        MusicIcon.BackgroundTransparency = 1
+        MusicIcon.Text = "🎵"
+        MusicIcon.TextColor3 = Color3.fromRGB(100, 150, 255)
+        MusicIcon.TextSize = 12
+        MusicIcon.Font = Enum.Font.GothamBold
+        MusicIcon.Parent = MusicItem
+        
+        -- Music name
+        local MusicName = Instance.new("TextLabel")
+        MusicName.Size = UDim2.new(1, -35, 1, 0)
+        MusicName.Position = UDim2.new(0, 30, 0, 0)
+        MusicName.BackgroundTransparency = 1
+        MusicName.Text = musicData.Name
+        MusicName.TextColor3 = Color3.fromRGB(255, 255, 255)
+        MusicName.TextSize = 11
+        MusicName.Font = Enum.Font.Gotham
+        MusicName.TextXAlignment = Enum.TextXAlignment.Left
+        MusicName.Parent = MusicItem
+        
+        -- Music Item Click
+        MusicItem.MouseButton1Click:Connect(function()
+            CurrentTrackIndex = i
+            PlayMusic(musicData)
+            
+            -- Update selection visual
+            for _, child in pairs(MusicScrollFrame:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+                    local stroke = child:FindFirstChild("UIStroke")
+                    if stroke then
+                        stroke.Color = Color3.fromRGB(50, 50, 50)
+                    end
+                end
+            end
+            MusicItem.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+            ItemStroke.Color = Color3.fromRGB(150, 200, 255)
+        end)
+        
+        -- Hover effects
+        MusicItem.MouseEnter:Connect(function()
+            if MusicItem.BackgroundColor3 ~= Color3.fromRGB(100, 150, 255) then
+                TweenService:Create(MusicItem, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+                    BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+                }):Play()
+                TweenService:Create(ItemStroke, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+                    Color = Color3.fromRGB(80, 80, 80)
+                }):Play()
+            end
+        end)
+        
+        MusicItem.MouseLeave:Connect(function()
+            if MusicItem.BackgroundColor3 ~= Color3.fromRGB(100, 150, 255) then
+                TweenService:Create(MusicItem, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+                    BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+                }):Play()
+                TweenService:Create(ItemStroke, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+                    Color = Color3.fromRGB(50, 50, 50)
+                }):Play()
+            end
+        end)
+    end
+    
+    -- Update ScrollFrame Canvas Size
+    MusicScrollFrame.CanvasSize = UDim2.new(0, 0, 0, MusicListLayout.AbsoluteContentSize.Y + 16)
+    MusicListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        MusicScrollFrame.CanvasSize = UDim2.new(0, 0, 0, MusicListLayout.AbsoluteContentSize.Y + 16)
+    end)
+    
+    -- Button Events with hover effects
+    PlayBtn.MouseButton1Click:Connect(function()
+        if MusicSystem.CurrentTrack then
+            PauseMusic()
+        elseif #MusicSystem.MusicList > 0 then
+            CurrentTrackIndex = 1
+            PlayMusic(MusicSystem.MusicList[1])
+        end
+    end)
+    
+    PlayBtn.MouseEnter:Connect(function()
+        TweenService:Create(PlayBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 45, 0, 40)
+        }):Play()
+    end)
+    
+    PlayBtn.MouseLeave:Connect(function()
+        TweenService:Create(PlayBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 40, 0, 35)
+        }):Play()
+    end)
+    
+    PrevBtn.MouseButton1Click:Connect(function()
+        PreviousTrack()
+    end)
+    
+    PrevBtn.MouseEnter:Connect(function()
+        TweenService:Create(PrevBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 40, 0, 40),
+            BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        }):Play()
+    end)
+    
+    PrevBtn.MouseLeave:Connect(function()
+        TweenService:Create(PrevBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 35, 0, 35),
+            BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        }):Play()
+    end)
+    
+    NextBtn.MouseButton1Click:Connect(function()
+        NextTrack()
+    end)
+    
+    NextBtn.MouseEnter:Connect(function()
+        TweenService:Create(NextBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 40, 0, 40),
+            BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        }):Play()
+    end)
+    
+    NextBtn.MouseLeave:Connect(function()
+        TweenService:Create(NextBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 35, 0, 35),
+            BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        }):Play()
+    end)
+    
+    StopBtn.MouseButton1Click:Connect(function()
+        StopMusic()
+    end)
+    
+    StopBtn.MouseEnter:Connect(function()
+        TweenService:Create(StopBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 40, 0, 40)
+        }):Play()
+    end)
+    
+    StopBtn.MouseLeave:Connect(function()
+        TweenService:Create(StopBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 35, 0, 35)
+        }):Play()
+    end)
+    
+    ShuffleBtn.MouseButton1Click:Connect(function()
+        ShuffleMusic()
+    end)
+    
+    ShuffleBtn.MouseEnter:Connect(function()
+        TweenService:Create(ShuffleBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 40, 0, 40),
+            BackgroundColor3 = Color3.fromRGB(120, 120, 255)
+        }):Play()
+    end)
+    
+    ShuffleBtn.MouseLeave:Connect(function()
+        TweenService:Create(ShuffleBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 35, 0, 35),
+            BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+        }):Play()
+    end)
+    
+    MusicCloseBtn.MouseButton1Click:Connect(function()
+        MusicPanel.Visible = false
+    end)
+    
+    MusicCloseBtn.MouseEnter:Connect(function()
+        TweenService:Create(MusicCloseBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            BackgroundColor3 = Color3.fromRGB(255, 100, 100),
+            Size = UDim2.new(0, 40, 0, 40)
+        }):Play()
+    end)
+    
+    MusicCloseBtn.MouseLeave:Connect(function()
+        TweenService:Create(MusicCloseBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            BackgroundColor3 = Color3.fromRGB(255, 70, 70),
+            Size = UDim2.new(0, 35, 0, 35)
+        }):Play()
+    end)
+    
+    MusicToggleBtn.MouseButton1Click:Connect(function()
+        MusicPanel.Visible = not MusicPanel.Visible
+        UpdateMusicPanelPosition()
+        
+        -- Toggle button animation
+        TweenService:Create(MusicToggleBtn, TweenInfo.new(0.3, Enum.EasingStyle.Back), {
+            Rotation = MusicPanel.Visible and 360 or 0
+        }):Play()
+    end)
+    
+    MusicToggleBtn.MouseEnter:Connect(function()
+        TweenService:Create(MusicToggleBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+            Size = UDim2.new(0, 35, 0, 35)
+        }):Play()
+    end)
+    
+    MusicToggleBtn.MouseLeave:Connect(function()
+        TweenService:Create(MusicToggleBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            BackgroundColor3 = Color3.fromRGB(25, 25, 25),
+            Size = UDim2.new(0, 30, 0, 30)
+        }):Play()
+    end)
+    
+    -- Volume Slider Interaction
+    local draggingVolume = false
+    
+    VolumeSlider.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingVolume = true
+        end
+    end)
+    
+    VolumeSlider.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingVolume = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingVolume and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local sliderPos = VolumeSlider.AbsolutePosition
+            local sliderSize = VolumeSlider.AbsoluteSize
+            local mouseX = input.Position.X
+            local relativeX = math.clamp((mouseX - sliderPos.X) / sliderSize.X, 0, 1)
+            UpdateVolume(relativeX)
+        end
+    end)
+    
+    -- Progress Slider Interaction
+    local draggingProgress = false
+    
+    ProgressSlider.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingProgress = true
+        end
+    end)
+    
+    ProgressSlider.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingProgress = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingProgress and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local sliderPos = ProgressSlider.AbsolutePosition
+            local sliderSize = ProgressSlider.AbsoluteSize
+            local mouseX = input.Position.X
+            local relativeX = math.clamp((mouseX - sliderPos.X) / sliderSize.X, 0, 1)
+            
+            if MusicSystem.CurrentSound then
+                MusicSystem.CurrentSound.TimePosition = MusicSystem.CurrentSound.TimeLength * relativeX
+                ProgressFill.Size = UDim2.new(relativeX, 0, 1, 0)
+                ProgressKnob.Position = UDim2.new(relativeX, -8, 0.5, -8)
+            end
+        end
+    end)
+    
+    -- Position update when MainWindow moves
+    RunService.RenderStepped:Connect(function()
+        if MusicPanel.Visible then
+            UpdateMusicPanelPosition()
+        end
+    end)
+    
+    -- Add MusicPanel to the same parent as MainWindow
+    MusicPanel.Parent = MainWindow.Parent
+    
+    -- Initialize volume
+    UpdateVolume(MusicSystem.Volume)
+    
+    return MusicPanel
+end
+
+-- Ana kütüphane tanımlaması
+local OrionLib = {
+	Elements = {},
+	ThemeObjects = {},
+	Connections = {},
+	Flags = {},
+	Themes = {
+		Default = {
+			Main = Color3.fromRGB(18, 18, 18),
+			Second = Color3.fromRGB(25, 25, 25),
+			Stroke = Color3.fromRGB(50, 50, 50),
+			Divider = Color3.fromRGB(50, 50, 50),
+			Text = Color3.fromRGB(240, 240, 240),
+			TextDark = Color3.fromRGB(140, 140, 140)
+		}
+	},
+	SelectedTheme = "Default",
+	Folder = nil,
+	SaveCfg = false
+}
+
+--[[ API/Executor Uyumluluk Katmanı ]]--
+
+-- Executor tespiti ve API uyumluluğu
+local EXECUTOR_CHECK = {}
+
+EXECUTOR_CHECK.executor = (function()
+    local success, result = pcall(function()
+        return identifyexecutor and identifyexecutor() or "Unknown"
+    end)
+    return success and result or "Unknown"
+end)()
+
+EXECUTOR_CHECK.functions = {
+    isfolder = isfolder or function(path) return false end,
+    makefolder = makefolder or function(path) return end,
+    isfile = isfile or function(path) return false end,
+    writefile = writefile or function(path, content) return end,
+    readfile = readfile or function(path) return "" end,
+    httpget = game.HttpGet or function(self, url) return "" end
+}
+
+-- Core API güvenli erişim
+local function GetCoreGui()
+    local success, result = pcall(function()
+        -- Sırayla farklı yöntemleri dener
+        return game:GetService("CoreGui") or 
+               gethui() or 
+               game.CoreGui or
+               game:GetService("Players").LocalPlayer.PlayerGui
+    end)
+    
+    if success and result then 
+        return result 
+    else
+        -- Son çare olarak PlayerGui'i döndür
+        return game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    end
+end
+
+-- getgenv evrensel erişim
+getgenv = getgenv or function() return _G end
+
+-- syn evrensel erişim
+syn = syn or {}
+syn.protect_gui = syn.protect_gui or function(gui) end
+syn.unprotect_gui = syn.unprotect_gui or function(gui) end
+
+-- Luraph desteği
+if not pcall(function() return readfile end) then
+    readfile = function() return "" end
+    writefile = function() return end
+    isfile = function() return false end
+    isfolder = function() return false end
+    makefolder = function() return end
+end
+
+--[[ Orion GUI Oluşturma ]]--
+local Orion = Instance.new("ScreenGui")
+Orion.Name = "KanistayLib"
+Orion.ResetOnSpawn = false
+Orion.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+Orion.DisplayOrder = 999999999
+
+-- Koruma ve parent ayarı
+local function SafePlaceGui(gui)
+    pcall(function()
+        -- CoreGui ataması güvenlik katmanları ile
+        if syn and syn.protect_gui then
+            syn.protect_gui(gui)
+            gui.Parent = GetCoreGui()
+        elseif gethui then
+            gui.Parent = gethui()
+        else
+            gui.Parent = GetCoreGui()
+        end
+    end)
+    
+    -- GUI hala parent'a eklenmediyse PlayerGui'ye ekle
+    if not gui.Parent then
+        gui.Parent = LocalPlayer.PlayerGui
+    end
+    
+    -- Versiyon kontrolü
+    gui:GetPropertyChangedSignal("Parent"):Connect(function()
+        if not gui.Parent then
+            pcall(function() SafePlaceGui(gui) end)
+        end
+    end)
+    
+    -- Aynı isimli diğer GUI'leri temizle
+    pcall(function()
+        for _, Interface in ipairs(gui.Parent:GetChildren()) do
+            if Interface.Name == gui.Name and Interface ~= gui then
+                Interface:Destroy()
+            end
+        end
+    end)
+end
+
+SafePlaceGui(Orion)
+
+-- Orion çalışıyor mu kontrolü
+function OrionLib:IsRunning()
+    return Orion and Orion.Parent ~= nil
+end
+
+-- Güvenli bağlantı oluşturma
+local function AddConnection(Signal, Function)
+    if not OrionLib:IsRunning() then
+        return
+    end
+    local Connection
+    pcall(function()
+        Connection = Signal:Connect(Function)
+        table.insert(OrionLib.Connections, Connection)
+    end)
+    return Connection
+end
+
+-- Bağlantı temizleme
+spawn(function()
+    while true do
+        if not OrionLib:IsRunning() then
+            for _, Connection in next, OrionLib.Connections do
+                pcall(function() Connection:Disconnect() end)
+            end
+            break
+        end
+        wait(1)
+    end
+end)
+
+-- Config Okuma/Yazma Fonksiyonları (daha güvenli)
+function SafeJsonEncode(data)
+    local success, result = pcall(function()
+        return HttpService:JSONEncode(data)
+    end)
+    return success and result or "{}"
+end
+
+function SafeJsonDecode(json)
+    local success, result = pcall(function()
+        return HttpService:JSONDecode(json)
+    end)
+    return success and result or {}
+end
+
+-- Güvenli config kaydetme
+local function SaveCfg(id)
+    if not OrionLib.SaveCfg or not OrionLib.Folder then return end
+    
+    pcall(function()
+        -- Klasör kontrolü
+        if not EXECUTOR_CHECK.functions.isfolder(OrionLib.Folder) then
+            EXECUTOR_CHECK.functions.makefolder(OrionLib.Folder)
+        end
+        
+        -- Flag verilerini topla
+        local Data = {}
+        for i, v in pairs(OrionLib.Flags) do
+            if v.Save then
+                if v.Type == "Colorpicker" then
+                    Data[i] = {R = v.Value.R * 255, G = v.Value.G * 255, B = v.Value.B * 255}
+                else
+                    Data[i] = v.Value
+                end
+            end
+        end
+        
+        -- Dosyaya yaz
+        local json = SafeJsonEncode(Data)
+        EXECUTOR_CHECK.functions.writefile(OrionLib.Folder .. "/" .. id .. ".txt", json)
+    end)
+end
+
+-- Güvenli config yükleme
+function LoadCfg(config)
+	pcall(function()
+		local Data = SafeJsonDecode(config)
+		for a, b in pairs(Data) do
+			if OrionLib.Flags[a] then
+				spawn(function() 
+					if OrionLib.Flags[a].Type == "Colorpicker" then
+						OrionLib.Flags[a]:Set(Color3.fromRGB(b.R, b.G, b.B))
+					else
+						OrionLib.Flags[a]:Set(b)
+					end    
+				end)
+			end
+		end
+	end)
+end
+
+-- Feather Icons kısmını kaldırma (isteğe bağlı)
+local Icons = {}
+
+-- GetIcon fonksiyonu - başa taşındı
+local function GetIcon(IconName)
+	-- Basitleştirilmiş versiyon
+	return Icons[IconName] or nil
+end
+
+local WhitelistedMouse = {
+    Enum.UserInputType.MouseButton1, 
+    Enum.UserInputType.MouseButton2, 
+    Enum.UserInputType.MouseButton3
+}
+
+local BlacklistedKeys = {
+    Enum.KeyCode.Unknown,
+    Enum.KeyCode.W,
+    Enum.KeyCode.A,
+    Enum.KeyCode.S,
+    Enum.KeyCode.D,
+    Enum.KeyCode.Up,
+    Enum.KeyCode.Left,
+    Enum.KeyCode.Down,
+    Enum.KeyCode.Right,
+    Enum.KeyCode.Slash,
+    Enum.KeyCode.Tab,
+    Enum.KeyCode.Backspace,
+    Enum.KeyCode.Escape
+}
+
+local function AddDraggingFunctionality(DragPoint, Main)
+	-- Daha dayanıklı bir sürükleme sistemi
+    local Dragging, DragInput, MousePos, FramePos = false, nil, nil, nil
+    
+    -- MouseButton1Down yerine InputBegan kullanarak daha geniş destek
+    local function BeginDrag(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+            Dragging = true
+            MousePos = Input.Position
+            FramePos = Main.Position
+            
+            -- Input durumunu takip et
+            Input.Changed:Connect(function()
+                if Input.UserInputState == Enum.UserInputState.End then
+                    Dragging = false
+                end
+            end)
+        end
+    end
+    
+    -- Mouse/dokunmatik hareket takibi
+    local function UpdateDrag(Input)
+        if Dragging and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
+            DragInput = Input
+            local Delta = Input.Position - MousePos
+            Main.Position = UDim2.new(FramePos.X.Scale, FramePos.X.Offset + Delta.X, FramePos.Y.Scale, FramePos.Y.Offset + Delta.Y)
+        end
+    end
+    
+    -- Hem DragPoint hem UserInputService üzerinden event bağlantıları
+    pcall(function()
+        DragPoint.InputBegan:Connect(BeginDrag)
+        UserInputService.InputChanged:Connect(UpdateDrag)
+    end)
+end   
+
+local function Create(Name, Properties, Children)
+	local Object = Instance.new(Name)
+	for i, v in next, Properties or {} do
+		Object[i] = v
+	end
+	for i, v in next, Children or {} do
+		v.Parent = Object
+	end
+	return Object
+end
+
+local function CreateElement(ElementName, ElementFunction)
+	OrionLib.Elements[ElementName] = function(...)
+		return ElementFunction(...)
+	end
+end
+
+local function MakeElement(ElementName, ...)
+	if ElementName == "Corner" then
+		local Corner = Create("UICorner", {
+			CornerRadius = UDim.new(0, 6) -- Daha yuvarlak köşeler (4'ten 6'ya)
+		})
+		return Corner
+	elseif ElementName == "Stroke" then
+		local Stroke = Create("UIStroke", {
+			Thickness = 1
+		})
+		return Stroke
+	elseif ElementName == "List" then
+		local List = Create("UIListLayout", {
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 4)
+		})
+		return List
+	elseif ElementName == "HorizontalList" then
+		local List = Create("UIListLayout", {
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 4)
+		})
+		return List
+	elseif ElementName == "Padding" then
+		local Padding = Create("UIPadding", {
+			PaddingBottom = UDim.new(0, 4),
+			PaddingLeft = UDim.new(0, 4),
+			PaddingRight = UDim.new(0, 4),
+			PaddingTop = UDim.new(0, 4)
+		})
+		if #{...} > 0 then
+			Padding.PaddingTop = UDim.new(0, ({...})[1])
+		end
+		if #{...} > 1 then
+			Padding.PaddingRight = UDim.new(0, ({...})[2])
+		end
+		if #{...} > 2 then
+			Padding.PaddingBottom = UDim.new(0, ({...})[3])
+		end
+		if #{...} > 3 then
+			Padding.PaddingLeft = UDim.new(0, ({...})[4])
+		end
+		return Padding
+	elseif ElementName == "TFrame" then
+		local Frame = Create("Frame", {
+			BackgroundTransparency = 1
+		})
+		return Frame
+	elseif ElementName == "Frame" then
+		local Frame = Create("Frame")
+		return Frame
+	elseif ElementName == "RoundFrame" then
+		local Frame = Create("Frame", {
+			BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+			BorderSizePixel = 0
+		})
+		local Corner = Create("UICorner", {
+			CornerRadius = UDim.new(0, 12) -- Daha yumuşak köşeler (10'dan 12'ye çıkarıldı)
+		})
+		Corner.Parent = Frame
+		
+		-- UISizeConstraint güvenlik kontrolü ekle
+		SafeUISizeConstraint(Frame, 0, 0, 10000, 10000)
+		
+		return Frame
+	elseif ElementName == "Button" then
+		local Button = Create("TextButton", {
+			Text = "",
+			AutoButtonColor = false,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0
+		})
+		return Button
+	elseif ElementName == "ScrollFrame" then
+		local ScrollFrame = Create("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			MidImage = "rbxassetid://7445543667",
+			BottomImage = "rbxassetid://7445543667",
+			TopImage = "rbxassetid://7445543667",
+			ScrollBarImageColor3 = ({...})[1],
+			BorderSizePixel = 0,
+			ScrollBarThickness = ({...})[2],
+			CanvasSize = UDim2.new(0, 0, 0, 0)
+		})
+		
+		-- ScrollFrame için UISizeConstraint ekle
+		SafeUISizeConstraint(ScrollFrame, 0, 0, 10000, 10000)
+		
+		return ScrollFrame
+	elseif ElementName == "Image" then
+		local ImageNew = Create("ImageLabel", {
+			Image = ({...})[1],
+			BackgroundTransparency = 1
+		})
+
+		if GetIcon(({...})[1]) ~= nil then
+			ImageNew.Image = GetIcon(({...})[1])
+		end	
+
+		return ImageNew
+	elseif ElementName == "ImageButton" then
+		local Image = Create("ImageButton", {
+			Image = ({...})[1],
+			BackgroundTransparency = 1
+		})
+		return Image
+	elseif ElementName == "Label" then
+		local Label = Create("TextLabel", {
+			Text = ({...})[1] or "",
+			TextColor3 = Color3.fromRGB(240, 240, 240),
+			TextTransparency = ({...})[3] or 0,
+			TextSize = ({...})[2] or 15,
+			Font = Enum.Font.Gotham,
+			RichText = true,
+			BackgroundTransparency = 1,
+			TextXAlignment = Enum.TextXAlignment.Left
+		})
+		
+		-- Label için UISizeConstraint ekle
+		SafeUISizeConstraint(Label, 0, 0, 10000, 10000)
+		
+		return Label
+	else
+		-- Fallback: Eğer element bulunamazsa, bir uyarı göster ve boş bir frame döndür
+		warn("Element not found: " .. ElementName)
+		return Create("Frame", {
+			BackgroundTransparency = 1,
+			Size = UDim2.new(0, 0, 0, 0)
+		})
+	end
+end
+
+local function SetProps(Element, Props)
+	table.foreach(Props, function(Property, Value)
+		Element[Property] = Value
+	end)
+	return Element
+end
+
+local function SetChildren(Element, Children)
+	table.foreach(Children, function(_, Child)
+		Child.Parent = Element
+	end)
+	return Element
+end
+
+local function Round(Number, Factor)
+	local Result = math.floor(Number/Factor + (math.sign(Number) * 0.5)) * Factor
+	if Result < 0 then Result = Result + Factor end
+	return Result
+end
+
+local function ReturnProperty(Object)
+	if Object:IsA("Frame") or Object:IsA("TextButton") then
+		return "BackgroundColor3"
+	end 
+	if Object:IsA("ScrollingFrame") then
+		return "ScrollBarImageColor3"
+	end 
+	if Object:IsA("UIStroke") then
+		return "Color"
+	end 
+	if Object:IsA("TextLabel") or Object:IsA("TextBox") then
+		return "TextColor3"
+	end   
+	if Object:IsA("ImageLabel") or Object:IsA("ImageButton") then
+		return "ImageColor3"
+	end   
+end
+
+local function AddThemeObject(Object, Type)
+	if not OrionLib.ThemeObjects[Type] then
+		OrionLib.ThemeObjects[Type] = {}
+	end    
+	table.insert(OrionLib.ThemeObjects[Type], Object)
+	Object[ReturnProperty(Object)] = OrionLib.Themes[OrionLib.SelectedTheme][Type]
+	return Object
+end    
+
+local function SetTheme()
+	for Name, Type in pairs(OrionLib.ThemeObjects) do
+		for _, Object in pairs(Type) do
+			Object[ReturnProperty(Object)] = OrionLib.Themes[OrionLib.SelectedTheme][Name]
+		end    
+	end    
+end
+
+local function PackColor(Color)
+	return {R = Color.R * 255, G = Color.G * 255, B = Color.B * 255}
+end    
+
+local function UnpackColor(Color)
+	return Color3.fromRGB(Color.R, Color.G, Color.B)
+end
+
+local function LoadCfg(Config)
+	local Data = HttpService:JSONDecode(Config)
+	table.foreach(Data, function(a,b)
+		if OrionLib.Flags[a] then
+			spawn(function() 
+				if OrionLib.Flags[a].Type == "Colorpicker" then
+					OrionLib.Flags[a]:Set(UnpackColor(b))
+				else
+					OrionLib.Flags[a]:Set(b)
+				end    
+			end)
+		else
+			warn("Orion Library Config Loader - Could not find ", a ,b)
+		end
+	end)
+end
+
+local function SaveCfg(Name)
+	local Data = {}
+	for i,v in pairs(OrionLib.Flags) do
+		if v.Save then
+			if v.Type == "Colorpicker" then
+				Data[i] = PackColor(v.Value)
+			else
+				Data[i] = v.Value
+			end
+		end
+		end
+	writefile(OrionLib.Folder .. "/" .. Name .. ".txt", tostring(HttpService:JSONEncode(Data)))
+end
+
+local WhitelistedMouse = {Enum.UserInputType.MouseButton1, Enum.UserInputType.MouseButton2,Enum.UserInputType.MouseButton3}
+local BlacklistedKeys = {Enum.KeyCode.Unknown,Enum.KeyCode.W,Enum.KeyCode.A,Enum.KeyCode.S,Enum.KeyCode.D,Enum.KeyCode.Up,Enum.KeyCode.Left,Enum.KeyCode.Down,Enum.KeyCode.Right,Enum.KeyCode.Slash,Enum.KeyCode.Tab,Enum.KeyCode.Backspace,Enum.KeyCode.Escape}
+
+-- Key kontrol fonksiyonu
+local function CheckKey(Table, Key)
+	for _, k in next, Table do
+		if k == Key then
+			return true
+		end
+	end
+	return false
+end
+
+CreateElement("Corner", function(Scale, Offset)
+	local Corner = Create("UICorner", {
+		CornerRadius = UDim.new(Scale or 0, Offset or 10)
+	})
+	return Corner
+end)
+
+CreateElement("Stroke", function(Color, Thickness)
+	local Stroke = Create("UIStroke", {
+		Color = Color or Color3.fromRGB(255, 255, 255),
+		Thickness = Thickness or 1
+	})
+	return Stroke
+end)
+
+CreateElement("List", function(Scale, Offset)
+	local List = Create("UIListLayout", {
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(Scale or 0, Offset or 0)
+	})
+	return List
+end)
+
+CreateElement("Padding", function(Bottom, Left, Right, Top)
+	local Padding = Create("UIPadding", {
+		PaddingBottom = UDim.new(0, Bottom or 4),
+		PaddingLeft = UDim.new(0, Left or 4),
+		PaddingRight = UDim.new(0, Right or 4),
+		PaddingTop = UDim.new(0, Top or 4)
+	})
+	return Padding
+end)
+
+CreateElement("TFrame", function()
+	local TFrame = Create("Frame", {
+		BackgroundTransparency = 1
+	})
+	return TFrame
+end)
+
+CreateElement("Frame", function(Color)
+	local Frame = Create("Frame", {
+		BackgroundColor3 = Color or Color3.fromRGB(255, 255, 255),
+		BorderSizePixel = 0
+	})
+	return Frame
+end)
+
+CreateElement("RoundFrame", function(Color, Scale, Offset)
+	local Frame = Create("Frame", {
+		BackgroundColor3 = Color or Color3.fromRGB(255, 255, 255),
+		BorderSizePixel = 0
+	}, {
+		Create("UICorner", {
+			CornerRadius = UDim.new(Scale, Offset)
+		})
+	})
+	return Frame
+end)
+
+CreateElement("Button", function()
+	local Button = Create("TextButton", {
+		Text = "",
+		AutoButtonColor = false,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0
+	})
+	return Button
+end)
+
+CreateElement("ScrollFrame", function(Color, Width)
+	local ScrollFrame = Create("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		MidImage = "rbxassetid://7445543667",
+		BottomImage = "rbxassetid://7445543667",
+		TopImage = "rbxassetid://7445543667",
+		ScrollBarImageColor3 = Color,
+		BorderSizePixel = 0,
+		ScrollBarThickness = Width,
+		CanvasSize = UDim2.new(0, 0, 0, 0)
+	})
+	return ScrollFrame
+end)
+
+CreateElement("Image", function(ImageID)
+	local ImageNew = Create("ImageLabel", {
+		Image = ImageID,
+		BackgroundTransparency = 1
+	})
+	if GetIcon(ImageID) ~= nil then
+		ImageNew.Image = GetIcon(ImageID)
+	end	
+	return ImageNew
+end)
+
+CreateElement("ImageButton", function(ImageID)
+	local Image = Create("ImageButton", {
+		Image = ImageID,
+		BackgroundTransparency = 1
+	})
+	return Image
+end)
+
+CreateElement("Label", function(Text, TextSize, Transparency)
+	local Label = Create("TextLabel", {
+		Text = Text or "",
+		TextColor3 = Color3.fromRGB(240, 240, 240),
+		TextTransparency = Transparency or 0,
+		TextSize = TextSize or 15,
+		Font = Enum.Font.Gotham,
+		RichText = true,
+		BackgroundTransparency = 1,
+		TextXAlignment = Enum.TextXAlignment.Left
+	})
+	return Label
+end)
+
+local NotificationHolder = SetProps(SetChildren(MakeElement("TFrame"), {
+	SetProps(MakeElement("List"), {
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom,
+		Padding = UDim.new(0, 5)
+	})}), {
+	Position = UDim2.new(1, -25, 1, -25),
+	Size = UDim2.new(0, 300, 1, -25),
+	AnchorPoint = Vector2.new(1, 1),
+	Parent = Orion
+})
+
+function OrionLib:MakeNotification(NotificationConfig)
+	spawn(function()
+		NotificationConfig.Name = NotificationConfig.Name or "Notification"
+		NotificationConfig.Content = NotificationConfig.Content or "Test"
+		NotificationConfig.Image = NotificationConfig.Image or "rbxassetid://4384403532"
+		NotificationConfig.Time = NotificationConfig.Time or 15
+
+		local NotificationParent = SetProps(MakeElement("TFrame"), {
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			Parent = NotificationHolder
+		})
+
+		local NotificationFrame = SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(25, 25, 25), 0, 10), {
+			Parent = NotificationParent, 
+			Size = UDim2.new(1, 0, 0, 0),
+			Position = UDim2.new(1, -55, 0, 0),
+			BackgroundTransparency = 0,
+			AutomaticSize = Enum.AutomaticSize.Y
+		}), {
+			MakeElement("Stroke", Color3.fromRGB(93, 93, 93), 1.2),
+			MakeElement("Padding", 12, 12, 12, 12),
+			SetProps(MakeElement("Image", NotificationConfig.Image), {
+				Size = UDim2.new(0, 20, 0, 20),
+				ImageColor3 = Color3.fromRGB(240, 240, 240),
+				Name = "Icon"
+			}),
+			SetProps(MakeElement("Label", NotificationConfig.Name, 15), {
+				Size = UDim2.new(1, -30, 0, 20),
+				Position = UDim2.new(0, 30, 0, 0),
+				Font = Enum.Font.GothamBold,
+				Name = "Title"
+			}),
+			SetProps(MakeElement("Label", NotificationConfig.Content, 14), {
+				Size = UDim2.new(1, 0, 0, 0),
+				Position = UDim2.new(0, 0, 0, 25),
+				Font = Enum.Font.GothamSemibold,
+				Name = "Content",
+				AutomaticSize = Enum.AutomaticSize.Y,
+				TextColor3 = Color3.fromRGB(200, 200, 200),
+				TextWrapped = true
+			})
+		})
+
+		TweenService:Create(NotificationFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quint), {Position = UDim2.new(0, 0, 0, 0)}):Play()
+		wait(NotificationConfig.Time - 0.88)
+		TweenService:Create(NotificationFrame, TweenInfo.new(0.8, Enum.EasingStyle.Quint), {BackgroundTransparency = 0.6}):Play()
+		wait(0.35)
+		TweenService:Create(NotificationFrame, TweenInfo.new(0.8, Enum.EasingStyle.Quint), {Position = UDim2.new(1, 20, 0, 0)}):Play()
+		wait(1.35)
+		NotificationFrame:Destroy()
+	end)
+end    
+
+function OrionLib:Init()
+	if OrionLib.SaveCfg then		
+		pcall(function()
+			if EXECUTOR_CHECK.functions.isfile(OrionLib.Folder .. "/" .. game.GameId .. ".txt") then
+				LoadCfg(EXECUTOR_CHECK.functions.readfile(OrionLib.Folder .. "/" .. game.GameId .. ".txt"))
+				OrionLib:MakeNotification({
+					Name = "Configuration",
+					Content = "Auto-loaded configuration for the game " .. game.GameId .. ".",
+					Time = 5
+				})
+			end
+		end)		
+	end	
+end	
+
+-- 1. NEON, TEK KATMANLI, KÜÇÜK VE SOLDA DOT
+local function AddOnlineDot(WindowName, MainWindow)
+    local TopBar = MainWindow:FindFirstChild("TopBar")
+    if not TopBar then return end
+
+    local OnlineDot = Instance.new("Frame")
+    OnlineDot.Name = "OnlineDot"
+    OnlineDot.Size = UDim2.new(0, 9, 0, 9)
+    OnlineDot.Position = UDim2.new(0, 8, 0.4, 0) -- Yeni pozisyon
+    OnlineDot.AnchorPoint = Vector2.new(0, 0.5)
+    OnlineDot.BackgroundColor3 = Color3.fromRGB(25, 255, 19)
+    OnlineDot.BorderSizePixel = 0
+    OnlineDot.Parent = TopBar
+
+    local DotCorner = Instance.new("UICorner")
+    DotCorner.CornerRadius = UDim.new(1, 0)
+    DotCorner.Parent = OnlineDot
+
+    -- DotNeon UIStroke efekti, ApplyStrokeMode olmadan
+    local DotNeon = Instance.new("UIStroke")
+    DotNeon.Thickness = 1.5
+    DotNeon.Transparency = 0.1
+    DotNeon.Color = Color3.fromRGB(25, 255, 19)
+    DotNeon.Parent = OnlineDot
+    
+    -- Dot artık animasyonsuz, sabit boyutta
+    WindowName.Position = UDim2.new(0, 24, 0, -24)
+end	
+
+function OrionLib:CreateToggleButton()
+    local player = game:GetService("Players").LocalPlayer
+    local imageButton, uiStroke = createImageButton(player:WaitForChild("PlayerGui"))
+    
+    setupDragging(imageButton)
+    setupRainbowStroke(uiStroke)
+    
+    -- KanistayLib'i açma/kapama işlevi
+    imageButton.MouseButton1Click:Connect(function()
+        if Orion then
+            Orion.Enabled = true
+        end
+    end)
+    
+    -- Görünürlük kontrolü
+    if Orion then
+        local function updateVisibility()
+            imageButton.Parent.Enabled = not Orion.Enabled
+        end
+        
+        updateVisibility()
+        Orion:GetPropertyChangedSignal("Enabled"):Connect(updateVisibility)
+    end
+    
+    return imageButton
+end
+
+function OrionLib:MakeWindow(WindowConfig)
+	local FirstTab = true
+	local Minimized = false
+	local Loaded = false
+	local UIHidden = false
+
+	WindowConfig = WindowConfig or {}
+	WindowConfig.Name = WindowConfig.Name or "Orion Library"
+	WindowConfig.ConfigFolder = WindowConfig.ConfigFolder or WindowConfig.Name
+	WindowConfig.SaveConfig = WindowConfig.SaveConfig or false
+	WindowConfig.HidePremium = WindowConfig.HidePremium or false
+	WindowConfig.CloseCallback = WindowConfig.CloseCallback or function() end
+	WindowConfig.ShowIcon = WindowConfig.ShowIcon or false
+	WindowConfig.Icon = WindowConfig.Icon or "rbxassetid://8834748103"
+	WindowConfig.Music = WindowConfig.Music or false -- New Music parameter
+	
+	OrionLib.Folder = WindowConfig.ConfigFolder
+	OrionLib.SaveCfg = WindowConfig.SaveConfig
+
+	if WindowConfig.SaveConfig then
+		if not isfolder(WindowConfig.ConfigFolder) then
+			makefolder(WindowConfig.ConfigFolder)
+		end	
+	end
+
+	-- YATAY TAB HOLDER - TopBar ile ItemContainer arasında
+	local TabHolder = AddThemeObject(SetChildren(SetProps(MakeElement("ScrollFrame", Color3.fromRGB(255, 255, 255), 4), {
+		Size = UDim2.new(1, 0, 0, 45), -- Yükseklik 45px
+		Position = UDim2.new(0, 0, 0, 40), -- TopBar'ın hemen altında
+		ScrollingDirection = Enum.ScrollingDirection.X, -- Yatay kaydırma
+		CanvasSize = UDim2.new(0, 0, 0, 0)
+	}), {
+		MakeElement("HorizontalList"), -- Yatay liste düzeni
+		MakeElement("Padding", 8, 8, 8, 8)
+	}), "Divider")
+
+	-- Tab holder için canvas size güncellemesi
+	AddConnection(TabHolder.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+		TabHolder.CanvasSize = UDim2.new(0, TabHolder.UIListLayout.AbsoluteContentSize.X + 16, 0, 0)
+	end)
+
+	local CloseBtn = SetChildren(SetProps(MakeElement("Button"), {
+		Size = UDim2.new(0.5, 0, 1, 0),
+		Position = UDim2.new(0.5, 0, 0, 0),
+		BackgroundTransparency = 1
+	}), {
+		AddThemeObject(SetProps(MakeElement("Image", "rbxassetid://7072725342"), {
+			Position = UDim2.new(0, 9, 0, 6),
+			Size = UDim2.new(0, 18, 0, 18)
+		}), "Text")
+	})
+
+	local MinimizeBtn = SetChildren(SetProps(MakeElement("Button"), {
+		Size = UDim2.new(0.5, 0, 1, 0),
+		BackgroundTransparency = 1
+	}), {
+		AddThemeObject(SetProps(MakeElement("Image", "rbxassetid://7072719338"), {
+			Position = UDim2.new(0, 9, 0, 6),
+			Size = UDim2.new(0, 18, 0, 18),
+			Name = "Ico"
+		}), "Text")
+	})
+
+	local DragPoint = SetProps(MakeElement("TFrame"), {
+		Size = UDim2.new(1, 0, 0, 40) -- TopBar yüksekliği 40px
+	})
+
+	local WindowName = AddThemeObject(SetProps(MakeElement("Label", WindowConfig.Name, 14), {
+		Size = UDim2.new(1, -30, 2, 0),
+		Position = UDim2.new(0, 25, 0, -20),
+		Font = Enum.Font.GothamBlack,
+		TextSize = 20
+	}), "Text")
+
+	local WindowTopBarLine = AddThemeObject(SetProps(MakeElement("Frame"), {
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.new(0, 0, 1, -1)
+	}), "Stroke")
+
+	local MainWindow = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(255, 255, 255), 0, 22), {
+		Parent = Orion,
+		Position = UDim2.new(0.5, -307, 0.5, -172),
+		Size = UDim2.new(0, 615, 0, 344),
+		ClipsDescendants = true
+	}), {
+		-- Kar efekti için container - en üstte görünmesi için
+		SetProps(MakeElement("TFrame"), {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Name = "SnowContainer",
+			ZIndex = 9999 -- Çok yüksek ZIndex değeri
+		}),
+		SetChildren(SetProps(MakeElement("TFrame"), {
+			Size = UDim2.new(1, 0, 0, 40), -- TopBar yüksekliği 40px
+			Name = "TopBar"
+		}), {
+			WindowName,
+			WindowTopBarLine,
+			AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(255, 255, 255), 0, 7), {
+				Size = UDim2.new(0, WindowConfig.Music and 105 or 70, 0, 30), -- Müzik butonu için genişlik artırıldı
+				Position = UDim2.new(1, WindowConfig.Music and -125 or -90, 0, 5)
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				AddThemeObject(SetProps(MakeElement("Frame"), {
+					Size = UDim2.new(0, 1, 1, 0),
+					Position = UDim2.new(0.5, 0, 0, 0)
+				}), "Stroke"), 
+				CloseBtn,
+				MinimizeBtn
+			}), "Second"), 
+		}),
+		DragPoint,
+		TabHolder -- Tab holder'ı MainWindow'a ekle
+	}), "Main")
+
+	-- Add Music System if enabled
+	if WindowConfig.Music then
+		CreateMusicSystem(MainWindow, WindowConfig)
+	end
+
+	-- Ana pencereye beyaz şerit ekleme
+	local MainStroke = Instance.new("UIStroke")
+	MainStroke.Thickness = 4.0
+	MainStroke.Color = Color3.fromRGB(255, 255, 255)
+	MainStroke.Transparency = 0.1
+	MainStroke.Parent = MainWindow
+	
+	-- Kanistay HUB yazısı - sol kenara tam yapışık
+	local KanistayLabel = Instance.new("TextLabel")
+	KanistayLabel.Name = "KanistayLabel"
+	KanistayLabel.Size = UDim2.new(0, 32, 0, 120)
+	KanistayLabel.BackgroundTransparency = 1
+	KanistayLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	KanistayLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	KanistayLabel.Font = Enum.Font.GothamBlack
+	KanistayLabel.TextSize = 18
+	KanistayLabel.Text = "Kanistay Hub"
+	KanistayLabel.TextXAlignment = Enum.TextXAlignment.Center
+	KanistayLabel.TextYAlignment = Enum.TextYAlignment.Center
+	KanistayLabel.Rotation = -90
+	KanistayLabel.ZIndex = 9999
+	KanistayLabel.Visible = true
+	KanistayLabel.Parent = Orion
+	KanistayLabel.Position = KanistayLabel.Position + UDim2.new(0, 3, 0, 0)
+	
+	-- RenderStepped ile label'ı menünün sol dış kenarına ve ortasına hizala
+	RunService.RenderStepped:Connect(function()
+		pcall(function()
+			if MainWindow and MainWindow.Parent and KanistayLabel and KanistayLabel.Parent then
+				local pos = MainWindow.AbsolutePosition
+				local size = MainWindow.AbsoluteSize
+				-- Sol dış kenara ve dikey olarak ortala
+				KanistayLabel.Position = UDim2.new(0, pos.X - KanistayLabel.Size.X.Offset - 8, 0, pos.Y + size.Y/2 - KanistayLabel.Size.Y.Offset/2)
+			end
+		end)
+	end)
+	
+	-- Yazının yanıp sönme efekti
+	spawn(function()
+		local visible = true
+		while wait(0.8) do -- 0.8 saniyede bir değişim
+			if MainWindow and MainWindow.Parent then
+				visible = not visible
+				if KanistayLabel and KanistayLabel.Parent then
+					KanistayLabel.TextTransparency = visible and 0.2 or 1.0 -- Görünür/görünmez arası geçiş
+				end
+			else
+				break
+			end
+		end
+	end)
+	
+	-- Dönen beyaz parlak efekt şeridi
+	local RotatingHighlight = Instance.new("UIGradient")
+	RotatingHighlight.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+		ColorSequenceKeypoint.new(0.3, Color3.fromRGB(255, 255, 255)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)), -- Tam beyaz
+		ColorSequenceKeypoint.new(0.7, Color3.fromRGB(255, 255, 255)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255))
+	})
+	RotatingHighlight.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.8),
+		NumberSequenceKeypoint.new(0.3, 0.6),
+		NumberSequenceKeypoint.new(0.5, 0.2), -- Daha görünür ve parlak
+		NumberSequenceKeypoint.new(0.7, 0.6),
+		NumberSequenceKeypoint.new(1, 0.8)
+	})
+	RotatingHighlight.Parent = MainStroke
+	
+	-- Dönen efekt animasyonu - garanti çalışsın
+	spawn(function()
+		local rot = 0
+		while wait(0.02) do -- Daha hızlı animasyon
+			if MainStroke and MainStroke.Parent then
+				rot = (rot + 1) % 360
+				if RotatingHighlight and RotatingHighlight.Parent then
+					RotatingHighlight.Rotation = rot
+				end
+			end
+		end
+	end)
+
+	if WindowConfig.ShowIcon then
+		WindowName.Position = UDim2.new(0, 50, 0, -20)
+		local WindowIcon = SetProps(MakeElement("Image", WindowConfig.Icon), {
+			Size = UDim2.new(0, 20, 0, 20),
+			Position = UDim2.new(0, 25, 0, 10)
+		})
+		WindowIcon.Parent = MainWindow.TopBar
+	end	
+
+	AddDraggingFunctionality(DragPoint, MainWindow)
+
+	AddConnection(CloseBtn.MouseButton1Up, function()
+		-- ScreenGui'yi tamamen devre dışı bırak
+		Orion.Enabled = false
+		WindowConfig.CloseCallback()
+	end)
+
+	-- Optimize edilmiş ve akıcı kar efekti oluşturma fonksiyonu
+	local function CreateSnowEffect()
+		local SnowContainer = MainWindow:FindFirstChild("SnowContainer")
+		if not SnowContainer then return end
+
+		local maxSnowflakes = 12
+		local snowflakes = {}
+		local lastSnowflakeTime = tick()
+		local minSpawnInterval = 0.35
+		local isLowPerformance = false
+
+		-- FPS izleme
+		local lastFrameTime = tick()
+		local frameCount, frameTimeTotal = 0, 0
+
+		-- Kar tanesi oluşturucu
+		local function createSnowflake()
+			if #snowflakes >= maxSnowflakes then return end
+
+			local size = math.random(2, 4)
+			local speed = math.random(18, 28) / 1000 -- 0.018-0.028
+			local amplitude = math.random(3, 10) / 100
+			local frequency = math.random(5, 12) / 10
+			local opacity = math.random(20, 60) / 100
+			local startX = math.random()
+
+			local snowflake = Instance.new("Frame")
+			snowflake.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			snowflake.BorderSizePixel = 0
+			snowflake.Size = UDim2.new(0, size, 0, size)
+			snowflake.Position = UDim2.new(startX, 0, -0.05, 0)
+			snowflake.BackgroundTransparency = 1 - opacity
+			snowflake.ZIndex = 10000
+
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(1, 0)
+			corner.Parent = snowflake
+
+			snowflake.Parent = SnowContainer
+
+			table.insert(snowflakes, {
+				frame = snowflake,
+				size = size,
+				speed = speed,
+				amplitude = amplitude,
+				frequency = frequency,
+				startX = startX,
+				startTime = tick(),
+				phase = math.random() * math.pi * 2
+			})
+		end
+
+		-- FPS'ye göre kar tanesi sayısı
+		local function checkPerformance()
+			local now = tick()
+			local deltaTime = now - lastFrameTime
+			frameTimeTotal = frameTimeTotal + deltaTime
+			frameCount = frameCount + 1
+
+			if frameTimeTotal >= 2 then
+				local averageFrameTime = frameTimeTotal / frameCount
+				local fps = 1 / averageFrameTime
+
+				if fps < 40 then maxSnowflakes = 5
+				elseif fps < 55 then maxSnowflakes = 8
+				else maxSnowflakes = 12 end
+
+				frameCount, frameTimeTotal = 0, 0
+			end
+
+			lastFrameTime = now
+		end
+
+		-- Ana animasyon döngüsü
+		RunService.RenderStepped:Connect(function()
+			if not MainWindow or not MainWindow.Parent then return end
+
+			checkPerformance()
+
+			-- Kar tanesi oluşturma
+			if #snowflakes < maxSnowflakes and (tick() - lastSnowflakeTime) > minSpawnInterval then
+				createSnowflake()
+				lastSnowflakeTime = tick()
+			end
+
+			-- Kar tanelerini güncelle
+			for i = #snowflakes, 1, -1 do
+				local s = snowflakes[i]
+				local elapsed = tick() - s.startTime
+				local y = -0.05 + elapsed * s.speed
+				local x = s.startX + math.sin(elapsed * s.frequency + s.phase) * s.amplitude
+
+				if s.frame and s.frame.Parent then
+					s.frame.Position = UDim2.new(x, 0, y, 0)
+
+					-- Hafif fade out
+					if y > 0.8 then
+						s.frame.BackgroundTransparency = math.clamp((y-0.8)*2 + (1-s.frame.BackgroundTransparency), 0, 1)
+					end
+
+					if y > 1 then
+						s.frame:Destroy()
+						table.remove(snowflakes, i)
+					end
+				end
+			end
+		end)
+	end
+	
+	-- Kar efektini başlat
+	CreateSnowEffect()
+
+	-- 1. BUTTON CONTAINER (ScreenGui'ye, menünün altını takip edecek şekilde)
+	local ButtonContainer = Instance.new("Frame")
+	ButtonContainer.Name = "ButtonContainer"
+	ButtonContainer.Size = UDim2.new(0, 22, 0, 22)
+	ButtonContainer.BackgroundTransparency = 1
+	ButtonContainer.Visible = true
+	ButtonContainer.ZIndex = 10000
+	ButtonContainer.Position = UDim2.new(0, 15, 1, -90)
+	ButtonContainer.Parent = Orion
+	
+	-- 2. ARTILI BUTON (TextLabel ile '+')
+	local PlusBtn = Instance.new("TextButton")
+	PlusBtn.Name = "PlusBtn"
+	PlusBtn.Size = UDim2.new(1, 0, 1, 0)
+	PlusBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	PlusBtn.BackgroundTransparency = 0.1
+	PlusBtn.Text = "+"
+	PlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	PlusBtn.Font = Enum.Font.GothamBold
+	PlusBtn.TextSize = 14
+	PlusBtn.ZIndex = 10001
+	PlusBtn.Parent = ButtonContainer
+	
+	-- Butonun köşelerini yuvarla
+	local PlusCorner = Instance.new("UICorner")
+	PlusCorner.CornerRadius = UDim.new(1, 0)
+	PlusCorner.Parent = PlusBtn
+
+	-- ButtonContainer ve KanistayLabel'ın görünürlüğünü senkronize et
+	local function syncVisibility()
+		if ButtonContainer and KanistayLabel then
+			KanistayLabel.Visible = ButtonContainer.Visible
+		end
+	end
+	
+	-- ButtonContainer'ın görünürlüğü değiştiğinde KanistayLabel'ı da güncelle
+	ButtonContainer:GetPropertyChangedSignal("Visible"):Connect(syncVisibility)
+	
+	-- İlk senkronizasyonu yap
+	syncVisibility()
+
+	-- Toggle butonunu oluştur
+	OrionLib:CreateToggleButton()
+
+	AddConnection(MinimizeBtn.MouseButton1Up, function()
+		if Minimized then
+			-- Büyütme işlemi
+			TweenService:Create(MainWindow, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0, 615, 0, 344)}):Play()
+			MinimizeBtn.Ico.Image = "rbxassetid://7072719338"
+			wait(.02)
+			MainWindow.ClipsDescendants = false
+			
+			-- TabHolder'ı göster
+			TabHolder.Visible = true
+			WindowTopBarLine.Visible = true
+			
+			-- ButtonContainer'ı göster (KanistayLabel otomatik olarak takip edecek)
+			if ButtonContainer then ButtonContainer.Visible = true end
+		else
+			-- Küçültme işlemi
+			MainWindow.ClipsDescendants = true
+			WindowTopBarLine.Visible = false
+			MinimizeBtn.Ico.Image = "rbxassetid://7072720870"
+			-- Menüyü başlığın genişliği + biraz ekstra alan kadar küçültme
+			WindowName.Text = WindowName.Text -- Yazıyı yenileyerek TextBounds'un doğru hesaplanmasını sağla 
+			
+			local titleWidth = WindowName.TextBounds.X
+			local bufferSpace = 140 -- Butonlar ve başlık için daha fazla alan
+			local minimizedWidth = math.max(titleWidth + bufferSpace, 280) -- Minimum genişlik 280
+			
+			-- TabHolder'ı gizle
+			TabHolder.Visible = false
+			
+			-- ButtonContainer'ı gizle (KanistayLabel otomatik olarak takip edecek)
+			if ButtonContainer then ButtonContainer.Visible = false end
+			
+			-- Sadece genişliği küçült
+			TweenService:Create(MainWindow, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0, minimizedWidth, 0, 40)}):Play()
+		end
+		
+		Minimized = not Minimized
+	end)
+
+	-- 3. SLIDER PANEL (ekranın altına, ortalanmış)
+	local SliderPanel = Instance.new("Frame")
+	SliderPanel.Name = "SliderPanel"
+	-- Slider paneli sade ve küçük
+	SliderPanel.Size = UDim2.new(0, 280, 0, 120) -- Genişletilmiş panel
+	SliderPanel.BackgroundColor3 = Color3.fromRGB(24,24,24)
+	SliderPanel.BackgroundTransparency = 0.1 -- Daha koyu
+	SliderPanel.Position = UDim2.new(0.5, -140, 1, -140) -- Daha aşağıda
+	SliderPanel.AnchorPoint = Vector2.new(0, 0)
+	SliderPanel.Visible = false -- Başlangıçta gizli
+	SliderPanel.ZIndex = 11 -- En üstte görünsün
+	SliderPanel.Parent = Orion
+
+	local PanelCorner = Instance.new("UICorner")
+	PanelCorner.CornerRadius = UDim.new(0, 12)
+	PanelCorner.Parent = SliderPanel
+	
+	-- X Kapatma Butonu
+	local CloseButton = Instance.new("TextButton")
+	CloseButton.Name = "CloseButton"
+	CloseButton.Size = UDim2.new(0, 24, 0, 24)
+	CloseButton.Position = UDim2.new(1, -30, 0, 6)
+	CloseButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	CloseButton.BackgroundTransparency = 0.3
+	CloseButton.Text = "✖" -- X işareti (daha belirgin)
+	CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	CloseButton.Font = Enum.Font.GothamBold
+	CloseButton.TextSize = 14
+	CloseButton.ZIndex = 12
+	CloseButton.Parent = SliderPanel
+	
+	-- X Butonunun köşelerini yuvarla
+	local CloseCorner = Instance.new("UICorner")
+	CloseCorner.CornerRadius = UDim.new(1, 0)
+	CloseCorner.Parent = CloseButton
+	
+	-- X Butonuna tıklama olayı
+	CloseButton.MouseButton1Click:Connect(function()
+		SliderPanel.Visible = false
+	end)
+	
+	-- X Butonu için hover efekti
+	CloseButton.MouseEnter:Connect(function()
+		TweenService:Create(CloseButton, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+			BackgroundColor3 = Color3.fromRGB(255, 80, 80),
+			TextColor3 = Color3.fromRGB(255, 255, 255)
+		}):Play()
+	end)
+	
+	CloseButton.MouseLeave:Connect(function()
+		TweenService:Create(CloseButton, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+			BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+			TextColor3 = Color3.fromRGB(255, 255, 255)
+		}):Play()
+	end)
+	
+	-- Butonun tıklama olayı - SliderPanel nil kontrolü ile
+	PlusBtn.MouseButton1Click:Connect(function()
+		if SliderPanel then
+			SliderPanel.Visible = not SliderPanel.Visible
+			
+			-- SliderPanel görünür olduğunda tüm içeriğinin görünürlüğünü kontrol et
+			if SliderPanel.Visible then
+				-- Tüm alt öğelerin görünürlüğünü kontrol et
+				for _, child in pairs(SliderPanel:GetChildren()) do
+					if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("Frame") then
+						child.Visible = true
+						
+						-- Frame içindeki alt öğeleri de kontrol et
+						if child:IsA("Frame") or child:IsA("TextButton") then
+							for _, subChild in pairs(child:GetChildren()) do
+								if subChild:IsA("TextLabel") or subChild:IsA("Frame") then
+									subChild.Visible = true
+								end
+							end
+						end
+					end
+				end
+				
+				-- Özellikle sliderları kontrol et
+				if SizeSlider then SizeSlider.Visible = true end
+				if TransSlider then TransSlider.Visible = true end
+				if ResetBtn then ResetBtn.Visible = true end
+				
+				-- Slider barları ve knobları kontrol et
+				if SizeSliderBar then SizeSliderBar.Visible = true end
+				if SizeSliderKnob then SizeSliderKnob.Visible = true end
+				if TransSliderBar then TransSliderBar.Visible = true end
+				if TransSliderKnob then TransSliderKnob.Visible = true end
+			end
+		end
+	end)
+	
+	-- Buton için hover efekti
+	PlusBtn.MouseEnter:Connect(function()
+		TweenService:Create(PlusBtn, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+			BackgroundColor3 = Color3.fromRGB(50, 50, 50),
+			TextColor3 = Color3.fromRGB(255, 255, 255)
+		}):Play()
+	end)
+	
+	PlusBtn.MouseLeave:Connect(function()
+		TweenService:Create(PlusBtn, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+			BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+			TextColor3 = Color3.fromRGB(255, 255, 255)
+		}):Play()
+	end)
+	
+	-- Panel Başlığı
+	local PanelTitle = Instance.new("TextLabel")
+	PanelTitle.Name = "PanelTitle"
+	PanelTitle.Size = UDim2.new(1, -20, 0, 24)
+	PanelTitle.Position = UDim2.new(0, 10, 0, 6)
+	PanelTitle.BackgroundTransparency = 1
+	PanelTitle.Text = "Settings"
+	PanelTitle.TextColor3 = Color3.fromRGB(240, 240, 240)
+	PanelTitle.Font = Enum.Font.GothamBold
+	PanelTitle.TextSize = 16
+	PanelTitle.ZIndex = 12
+	PanelTitle.TextXAlignment = Enum.TextXAlignment.Center
+	PanelTitle.Parent = SliderPanel
+	
+	-- Size Slider
+	local SizeSlider = Instance.new("TextButton")
+	SizeSlider.Name = "SizeSlider"
+	SizeSlider.Size = UDim2.new(0.9, 0, 0, 26)
+	SizeSlider.Position = UDim2.new(0.05, 0, 0, 36)
+	SizeSlider.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
+	SizeSlider.BackgroundTransparency = 0.5
+	SizeSlider.Text = "Size"
+	SizeSlider.TextColor3 = Color3.fromRGB(230, 230, 230)
+	SizeSlider.Font = Enum.Font.GothamBold
+	SizeSlider.TextSize = 14
+	SizeSlider.ZIndex = 12
+	SizeSlider.TextXAlignment = Enum.TextXAlignment.Left
+	SizeSlider.AutoButtonColor = false
+	SizeSlider.Parent = SliderPanel
+	
+	-- Size Corner
+	local SizeCorner = Instance.new("UICorner")
+	SizeCorner.CornerRadius = UDim.new(0, 6)
+	SizeCorner.Parent = SizeSlider
+	
+	-- Size Slider Bar
+	local SizeSliderBar = Instance.new("Frame")
+	SizeSliderBar.Name = "Bar"
+	SizeSliderBar.Size = UDim2.new(0.65, 0, 0, 5)
+	SizeSliderBar.Position = UDim2.new(0.25, 0, 0.5, 0)
+	SizeSliderBar.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+	SizeSliderBar.BackgroundTransparency = 0.7
+	SizeSliderBar.ZIndex = 12
+	SizeSliderBar.Parent = SizeSlider
+	
+	-- Size Bar Corner
+	local SizeBarCorner = Instance.new("UICorner")
+	SizeBarCorner.CornerRadius = UDim.new(0, 10)
+	SizeBarCorner.Parent = SizeSliderBar
+	
+	-- Size Slider Knob
+	local SizeSliderKnob = Instance.new("Frame")
+	SizeSliderKnob.Name = "Knob"
+	SizeSliderKnob.Size = UDim2.new(0, 16, 0, 16)
+	SizeSliderKnob.Position = UDim2.new(0.5, -8, 0.5, -8)
+	SizeSliderKnob.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+	SizeSliderKnob.ZIndex = 13
+	SizeSliderKnob.Parent = SizeSliderBar
+	
+	-- Size Knob Corner
+	local KnobCorner = Instance.new("UICorner")
+	KnobCorner.CornerRadius = UDim.new(1, 0)
+	KnobCorner.Parent = SizeSliderKnob
+	
+	-- Size Knob Label
+	local SizeValueLabel = Instance.new("TextLabel")
+	SizeValueLabel.Name = "ValueLabel"
+	SizeValueLabel.Size = UDim2.new(0, 40, 0, 20)
+	SizeValueLabel.Position = UDim2.new(0, 8, 0.5, -10)
+	SizeValueLabel.BackgroundTransparency = 1
+	SizeValueLabel.Text = "100%"
+	SizeValueLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+	SizeValueLabel.Font = Enum.Font.GothamSemibold
+	SizeValueLabel.TextSize = 12
+	SizeValueLabel.ZIndex = 12
+	SizeValueLabel.Parent = SizeSlider
+	
+	-- Size Reset Button
+	local SizeResetBtn = Instance.new("TextButton")
+	SizeResetBtn.Name = "SizeResetBtn"
+	SizeResetBtn.Size = UDim2.new(0, 18, 0, 18)
+	SizeResetBtn.Position = UDim2.new(0.95, -9, 0.5, -9)
+	SizeResetBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	SizeResetBtn.Text = "⟳"
+	SizeResetBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+	SizeResetBtn.Font = Enum.Font.GothamBold
+	SizeResetBtn.TextSize = 12
+	SizeResetBtn.ZIndex = 12
+	SizeResetBtn.AutoButtonColor = true
+	SizeResetBtn.Parent = SizeSlider
+	
+	-- Size Reset Corner
+	local SizeResetCorner = Instance.new("UICorner")
+	SizeResetCorner.CornerRadius = UDim.new(1, 0)
+	SizeResetCorner.Parent = SizeResetBtn
+	
+	-- Transparency Slider
+	local TransSlider = Instance.new("TextButton")
+	TransSlider.Name = "TransSlider"
+	TransSlider.Size = UDim2.new(0.9, 0, 0, 26)
+	TransSlider.Position = UDim2.new(0.05, 0, 0, 68)
+	TransSlider.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
+	TransSlider.BackgroundTransparency = 0.5
+	TransSlider.Text = "Theme"
+	TransSlider.TextColor3 = Color3.fromRGB(230, 230, 230)
+	TransSlider.Font = Enum.Font.GothamBold
+	TransSlider.TextSize = 14
+	TransSlider.ZIndex = 12
+	TransSlider.TextXAlignment = Enum.TextXAlignment.Left
+	TransSlider.AutoButtonColor = false
+	TransSlider.Parent = SliderPanel
+	
+	-- Trans Corner
+	local TransCorner = Instance.new("UICorner")
+	TransCorner.CornerRadius = UDim.new(0, 6)
+	TransCorner.Parent = TransSlider
+	
+	-- Trans Slider Bar
+	local TransSliderBar = Instance.new("Frame")
+	TransSliderBar.Name = "Bar"
+	TransSliderBar.Size = UDim2.new(0.65, 0, 0, 5)
+	TransSliderBar.Position = UDim2.new(0.25, 0, 0.5, 0)
+	TransSliderBar.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+	TransSliderBar.BackgroundTransparency = 0.7
+	TransSliderBar.ZIndex = 12
+	TransSliderBar.Parent = TransSlider
+	
+	-- Trans Bar Corner
+	local TransBarCorner = Instance.new("UICorner")
+	TransBarCorner.CornerRadius = UDim.new(0, 10)
+	TransBarCorner.Parent = TransSliderBar
+	
+	-- Trans Slider Knob
+	local TransSliderKnob = Instance.new("Frame")
+	TransSliderKnob.Name = "Knob"
+	TransSliderKnob.Size = UDim2.new(0, 16, 0, 16)
+	TransSliderKnob.Position = UDim2.new(0.5, -8, 0.5, -8)
+	TransSliderKnob.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+	TransSliderKnob.ZIndex = 13
+	TransSliderKnob.Parent = TransSliderBar
+	
+	-- Trans Knob Corner
+	local KnobCorner2 = Instance.new("UICorner")
+	KnobCorner2.CornerRadius = UDim.new(1, 0)
+	KnobCorner2.Parent = TransSliderKnob
+	
+	-- Trans Value Label
+	local TransValueLabel = Instance.new("TextLabel")
+	TransValueLabel.Name = "ValueLabel"
+	TransValueLabel.Size = UDim2.new(0, 40, 0, 20)
+	TransValueLabel.Position = UDim2.new(0, 8, 0.5, -10)
+	TransValueLabel.BackgroundTransparency = 1
+	TransValueLabel.Text = "0%"
+	TransValueLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+	TransValueLabel.Font = Enum.Font.GothamSemibold
+	TransValueLabel.TextSize = 12
+	TransValueLabel.ZIndex = 12
+	TransValueLabel.Parent = TransSlider
+	
+	-- Trans Reset Button
+	local TransResetBtn = Instance.new("TextButton")
+	TransResetBtn.Name = "TransResetBtn"
+	TransResetBtn.Size = UDim2.new(0, 18, 0, 18)
+	TransResetBtn.Position = UDim2.new(0.95, -9, 0.5, -9)
+	TransResetBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	TransResetBtn.Text = "⟳"
+	TransResetBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+	TransResetBtn.Font = Enum.Font.GothamBold
+	TransResetBtn.TextSize = 12
+	TransResetBtn.ZIndex = 12
+	TransResetBtn.AutoButtonColor = true
+	TransResetBtn.Parent = TransSlider
+	
+	-- Trans Reset Corner
+	local TransResetCorner = Instance.new("UICorner")
+	TransResetCorner.CornerRadius = UDim.new(1, 0)
+	TransResetCorner.Parent = TransResetBtn
+	
+	-- Reset Butonu
+	local ResetBtn = Instance.new("TextButton")
+	ResetBtn.Name = "ResetBtn"
+	ResetBtn.Size = UDim2.new(0, 100, 0, 22)
+	ResetBtn.Position = UDim2.new(0.5, -50, 0, 100)
+	ResetBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	ResetBtn.Text = "Reset All"
+	ResetBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+	ResetBtn.Font = Enum.Font.GothamBold
+	ResetBtn.TextSize = 14
+	ResetBtn.ZIndex = 12
+	ResetBtn.AutoButtonColor = true
+	ResetBtn.Parent = SliderPanel
+	
+	-- Reset Corner
+	local ResetCorner = Instance.new("UICorner")
+	ResetCorner.CornerRadius = UDim.new(0, 6)
+	ResetCorner.Parent = ResetBtn
+	
+	-- Reset butonları fonksiyonları
+	ResetBtn.MouseButton1Click:Connect(function()
+		pcall(function()
+			if MainWindow then
+				MainWindow.Size = UDim2.new(0, 615, 0, 344)
+			end
+			if SizeSliderKnob then
+				SizeSliderKnob.Position = UDim2.new(0.5, -8, 0.5, -8)
+				SizeValueLabel.Text = "100%"
+			end
+			if TransSliderKnob then
+				TransSliderKnob.Position = UDim2.new(0, -8, 0.5, -8)
+				TransValueLabel.Text = "0%"
+			end
+			if MainWindow then
+				MainWindow.BackgroundTransparency = 0
+			end
+		end)
+	end)
+	
+	SizeResetBtn.MouseButton1Click:Connect(function()
+		pcall(function()
+			if MainWindow then
+				MainWindow.Size = UDim2.new(0, 615, 0, 344)
+			end
+			if SizeSliderKnob then
+				SizeSliderKnob.Position = UDim2.new(0.5, -8, 0.5, -8)
+				SizeValueLabel.Text = "100%"
+			end
+		end)
+	end)
+	
+	TransResetBtn.MouseButton1Click:Connect(function()
+		pcall(function()
+			if MainWindow then
+				MainWindow.BackgroundTransparency = 0
+			end
+			if TransSliderKnob then
+				TransSliderKnob.Position = UDim2.new(0, -8, 0.5, -8)
+				TransValueLabel.Text = "0%"
+			end
+		end)
+	end)
+	
+	-- Size Slider drag - sürükleme işlemi
+	local draggingSize = false
+	
+	pcall(function()
+		if SizeSliderKnob then
+			SizeSliderKnob.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 then 
+					draggingSize = true 
+				end
+			end)
+			
+			SizeSliderKnob.InputEnded:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 then 
+					draggingSize = false 
+				end
+			end)
+		end
+		
+		UserInputService.InputChanged:Connect(function(input)
+			if draggingSize and input.UserInputType == Enum.UserInputType.MouseMovement and SizeSliderBar then
+				pcall(function()
+					local abs = SizeSliderBar.AbsolutePosition
+					local size = SizeSliderBar.AbsoluteSize.X
+					local rel = math.clamp((input.Position.X - abs.X) / size, 0, 1)
+					
+					if SizeSliderKnob then
+						SizeSliderKnob.Position = UDim2.new(rel, -8, 0.5, -8)
+					end
+					
+					-- Size değişikliği
+					local minW, maxW = 400, 900
+					local minH, maxH = 200, 600
+					local newW = minW + (maxW-minW)*rel
+					local newH = minH + (maxH-minH)*rel
+					
+					if MainWindow then
+						MainWindow.Size = UDim2.new(0, newW, 0, newH)
+					end
+					
+					-- Label değerini güncelle
+					if SizeValueLabel then
+						SizeValueLabel.Text = math.floor(rel * 100) .. "%"
+					end
+				end)
+			end
+		end)
+	end)
+	
+	-- Transparency Slider drag
+	local draggingTrans = false
+	
+	pcall(function()
+		if TransSliderKnob then
+			TransSliderKnob.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 then 
+					draggingTrans = true 
+				end
+			end)
+			
+			TransSliderKnob.InputEnded:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 then 
+					draggingTrans = false 
+				end
+			end)
+		end
+		
+		UserInputService.InputChanged:Connect(function(input)
+			if draggingTrans and input.UserInputType == Enum.UserInputType.MouseMovement and TransSliderBar then
+				pcall(function()
+					local abs = TransSliderBar.AbsolutePosition
+					local size = TransSliderBar.AbsoluteSize.X
+					local rel = math.clamp((input.Position.X - abs.X) / size, 0, 1)
+					
+					if TransSliderKnob then
+						TransSliderKnob.Position = UDim2.new(rel, -8, 0.5, -8)
+					end
+					
+					-- SADECE şeffaflık değişimi, renk değişimi tamamen kaldırıldı
+					if MainWindow then
+						local tval = tonumber(rel) or 0
+						tval = tval * 0.8 -- 0 ila 0.8 arası transparanlık
+						MainWindow.BackgroundTransparency = tval
+					end
+					
+					-- Label değerini güncelle
+					if TransValueLabel then
+						TransValueLabel.Text = math.floor((tonumber(rel) or 0) * 100) .. "%"
+					end
+				end)
+			end
+		end)
+	end)
+	
+	-- MainWindow'un altını takip etmesi için her frame konum güncelle (iyileştirilmiş)
+	local lastUpdate = 0
+	local updateInterval = 0.1 -- 100 ms (saniyede 10 kez güncellenecek)
+	
+	RunService.RenderStepped:Connect(function()
+		-- Artı butonunun menüyü anında takip etmesi için optimizasyon
+		pcall(function()
+			-- Artı butonunun konumunu MainWindow'un sol altına ayarla - anında takip için
+			if MainWindow and MainWindow.Parent and ButtonContainer and ButtonContainer.Parent then
+				local pos = MainWindow.AbsolutePosition
+				local size = MainWindow.AbsoluteSize
+				-- Daha yapışık ve anında takip için doğrudan pozisyon atama
+				ButtonContainer.Position = UDim2.new(0, pos.X - 5, 0, pos.Y + size.Y - 25)
+			end
+			
+			-- ItemContainer'ların pozisyonunu güncelle
+			if MainWindow then
+				for _, v in pairs(MainWindow:GetChildren()) do
+					if v.Name == "ItemContainer" and MainWindow:FindFirstChild("TopBar") then
+						pcall(function()
+							-- TopBar + TabHolder yüksekliği = 40 + 45 = 85px
+							local topOffset = 85 + 2 -- 2 piksel extra padding
+							
+							v.Size = UDim2.new(1, 0, 1, -topOffset)
+							v.Position = UDim2.new(0, 0, 0, topOffset)
+							
+							-- CanvasSize'ı doğru şekilde güncelle ve sınırla
+							if v:FindFirstChild("UIListLayout") and v.Visible then
+								local contentHeight = v.UIListLayout.AbsoluteContentSize.Y + 30
+								local visibleHeight = v.AbsoluteSize.Y
+								v.CanvasSize = UDim2.new(0, 0, 0, contentHeight)
+								
+								-- ScrollingFrame'in içeriğinin görünür alan dışına taşmasını önle
+								if contentHeight < visibleHeight then
+									v.CanvasSize = UDim2.new(0, 0, 0, visibleHeight)
+								end
+							end
+						end)
+					end
+				end
+			end
+		end)
+	end)
+
+	AddOnlineDot(WindowName, MainWindow)
+
+	local TabFunction = {}
+
+	function TabFunction:MakeTab(TabConfig)
+		TabConfig = TabConfig or {}
+		TabConfig.Name = TabConfig.Name or "Tab"
+		TabConfig.Icon = TabConfig.Icon or ""
+		TabConfig.PremiumOnly = TabConfig.PremiumOnly or false
+
+		-- YATAY TAB FRAME - Genişlik otomatik, yükseklik sabit
+		local TabFrame = SetChildren(SetProps(MakeElement("Button"), {
+			Size = UDim2.new(0, 0, 1, 0), -- Genişlik otomatik hesaplanacak
+			AutomaticSize = Enum.AutomaticSize.X, -- Otomatik genişlik
+			Parent = TabHolder
+		}), {
+			AddThemeObject(SetProps(MakeElement("Image", TabConfig.Icon), {
+				AnchorPoint = Vector2.new(0, 0.5),
+				Size = UDim2.new(0, 16, 0, 16), -- Biraz daha küçük ikon
+				Position = UDim2.new(0, 8, 0.5, 0),
+				ImageTransparency = 0.4,
+				Name = "Ico"
+			}), "Text"),
+			AddThemeObject(SetProps(MakeElement("Label", TabConfig.Name, 13), {
+				Size = UDim2.new(0, 0, 1, 0),
+				Position = UDim2.new(0, 28, 0, 0), -- İkondan sonra
+				Font = Enum.Font.GothamSemibold,
+				TextTransparency = 0.4,
+				AutomaticSize = Enum.AutomaticSize.X, -- Otomatik genişlik
+				Name = "Title"
+			}), "Text"),
+			-- Tab için padding
+			MakeElement("Padding", 0, 8, 8, 0)
+		})
+
+		-- Tab genişliğini hesapla ve ayarla
+		spawn(function()
+			wait() -- UI'nin render olmasını bekle
+			local titleWidth = TabFrame.Title.TextBounds.X
+			local totalWidth = 28 + titleWidth + 16 -- İkon + metin + padding
+			TabFrame.Size = UDim2.new(0, totalWidth, 1, 0)
+		end)
+
+		if GetIcon(TabConfig.Icon) ~= nil then
+			TabFrame.Ico.Image = GetIcon(TabConfig.Icon)
+		end	
+
+		-- ITEM CONTAINER - TabHolder'ın altında
+		local Container = Ad
+
+dThemeObject(SetChildren(SetProps(MakeElement("ScrollFrame", Color3.fromRGB(255, 255, 255), 4), {
+			Size = UDim2.new(1, 0, 1, -87), -- TabHolder yüksekliği kadar yukarıdan boşluk
+			Position = UDim2.new(0, 0, 0, 87), -- TopBar (40) + TabHolder (45) + 2px padding
+			Visible = FirstTab,
+			Name = "ItemContainer"
+		}), {
+			MakeElement("List", 0, 4),
+			MakeElement("Padding", 15, 15, 15, 15)
+		}), "Divider")
+
+		Container.Parent = MainWindow
+
+		AddConnection(Container.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+			Container.CanvasSize = UDim2.new(0, 0, 0, Container.UIListLayout.AbsoluteContentSize.Y + 30)
+		end)
+
+		AddConnection(TabFrame.MouseButton1Up, function()
+			for _, v in next, MainWindow:GetChildren() do
+				if v.Name == "ItemContainer" then
+					v.Visible = false
+				end
+			end
+			Container.Visible = true
+
+			-- Tab seçim efekti
+			for _, v in next, TabHolder:GetChildren() do
+				if v:IsA("TextButton") then
+					v.Ico.ImageTransparency = 0.4
+					v.Title.TextTransparency = 0.4
+				end
+			end
+			TabFrame.Ico.ImageTransparency = 0
+			TabFrame.Title.TextTransparency = 0
+		end)
+
+		if FirstTab then
+			TabFrame.Ico.ImageTransparency = 0
+			TabFrame.Title.TextTransparency = 0
+			FirstTab = false
+		end
+
+		local ElementFunction = {}
+
+		function ElementFunction:AddButton(ButtonConfig)
+			ButtonConfig = ButtonConfig or {}
+			ButtonConfig.Name = ButtonConfig.Name or "Button"
+			ButtonConfig.Callback = ButtonConfig.Callback or function() end
+
+			local ButtonFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 40),
+				Parent = Container
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				SetChildren(SetProps(MakeElement("Button"), {
+					Size = UDim2.new(1, 0, 1, 0)
+				}), {
+					AddThemeObject(SetProps(MakeElement("Label", ButtonConfig.Name, 14), {
+						Size = UDim2.new(1, -20, 1, 0),
+						Position = UDim2.new(0, 20, 0, 0),
+						Font = Enum.Font.GothamSemibold
+					}), "Text")
+				})
+			}), "Second")
+
+			AddConnection(ButtonFrame.TextButton.MouseButton1Up, function()
+				spawn(function() ButtonConfig.Callback() end)
+			end)
+
+			return ButtonFrame
+		end
+
+		function ElementFunction:AddToggle(ToggleConfig)
+			ToggleConfig = ToggleConfig or {}
+			ToggleConfig.Name = ToggleConfig.Name or "Toggle"
+			ToggleConfig.Default = ToggleConfig.Default or false
+			ToggleConfig.Flag = ToggleConfig.Flag or nil
+			ToggleConfig.Save = ToggleConfig.Save or true
+			ToggleConfig.Callback = ToggleConfig.Callback or function() end
+
+			local ToggleFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 40),
+				Parent = Container
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				SetChildren(SetProps(MakeElement("Button"), {
+					Size = UDim2.new(1, 0, 1, 0)
+				}), {
+					AddThemeObject(SetProps(MakeElement("Label", ToggleConfig.Name, 14), {
+						Size = UDim2.new(1, -50, 1, 0),
+						Position = UDim2.new(0, 20, 0, 0),
+						Font = Enum.Font.GothamSemibold
+					}), "Text"),
+					SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(255, 255, 255), 0, 12), {
+						Size = UDim2.new(0, 40, 0, 20),
+						Position = UDim2.new(1, -50, 0.5, -10),
+						Name = "ToggleOuter"
+					}), {
+						AddThemeObject(MakeElement("Stroke"), "Stroke"),
+						SetProps(MakeElement("RoundFrame", Color3.fromRGB(255, 255, 255), 0, 10), {
+							Size = UDim2.new(0, 18, 0, 18),
+							Position = UDim2.new(0, 1, 0, 1),
+							Name = "ToggleInner"
+						})
+					})
+				})
+			}), "Second")
+
+			local ToggleOuter = ToggleFrame.TextButton.ToggleOuter
+			local ToggleInner = ToggleOuter.ToggleInner
+			local Toggled = ToggleConfig.Default
+
+			local function SetToggle(Bool)
+				Toggled = Bool
+				if Bool then
+					TweenService:Create(ToggleInner, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Position = UDim2.new(1, -19, 0, 1), BackgroundColor3 = Color3.fromRGB(0, 162, 255)}):Play()
+					TweenService:Create(ToggleOuter, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {BackgroundColor3 = Color3.fromRGB(0, 162, 255)}):Play()
+				else
+					TweenService:Create(ToggleInner, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Position = UDim2.new(0, 1, 0, 1), BackgroundColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+					TweenService:Create(ToggleOuter, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {BackgroundColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+				end
+				spawn(function() ToggleConfig.Callback(Bool) end)
+			end
+
+			AddConnection(ToggleFrame.TextButton.MouseButton1Up, function()
+				SetToggle(not Toggled)
+			end)
+
+			if ToggleConfig.Flag then
+				OrionLib.Flags[ToggleConfig.Flag] = {
+					Value = ToggleConfig.Default,
+					Type = "Toggle",
+					Set = SetToggle,
+					Save = ToggleConfig.Save
+				}
+			end
+
+			SetToggle(ToggleConfig.Default)
+
+			local ToggleFunction = {}
+			function ToggleFunction:Set(Bool)
+				SetToggle(Bool)
+			end
+
+			return ToggleFunction
+		end
+
+		function ElementFunction:AddSlider(SliderConfig)
+			SliderConfig = SliderConfig or {}
+			SliderConfig.Name = SliderConfig.Name or "Slider"
+			SliderConfig.Min = SliderConfig.Min or 0
+			SliderConfig.Max = SliderConfig.Max or 100
+			SliderConfig.Default = SliderConfig.Default or 50
+			SliderConfig.Increment = SliderConfig.Increment or 1
+			SliderConfig.ValueName = SliderConfig.ValueName or ""
+			SliderConfig.Flag = SliderConfig.Flag or nil
+			SliderConfig.Save = SliderConfig.Save or true
+			SliderConfig.Callback = SliderConfig.Callback or function() end
+
+			local SliderFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 50),
+				Parent = Container
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				AddThemeObject(SetProps(MakeElement("Label", SliderConfig.Name, 14), {
+					Size = UDim2.new(1, -20, 0, 20),
+					Position = UDim2.new(0, 20, 0, 5),
+					Font = Enum.Font.GothamSemibold
+				}), "Text"),
+				AddThemeObject(SetProps(MakeElement("Label", SliderConfig.Default .. SliderConfig.ValueName, 13), {
+					Size = UDim2.new(1, -20, 0, 20),
+					Position = UDim2.new(0, 20, 0, 25),
+					Font = Enum.Font.Gotham,
+					Name = "ValueLabel"
+				}), "TextDark"),
+				SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(255, 255, 255), 0, 3), {
+					Size = UDim2.new(1, -40, 0, 6),
+					Position = UDim2.new(0, 20, 1, -15),
+					Name = "SliderBack"
+				}), {
+					AddThemeObject(MakeElement("Stroke"), "Stroke"),
+					SetProps(MakeElement("RoundFrame", Color3.fromRGB(0, 162, 255), 0, 3), {
+						Size = UDim2.new(0.5, 0, 1, 0),
+						Name = "SliderFill"
+					}),
+					SetProps(MakeElement("RoundFrame", Color3.fromRGB(255, 255, 255), 0, 8), {
+						Size = UDim2.new(0, 16, 0, 16),
+						Position = UDim2.new(0.5, -8, 0.5, -8),
+						Name = "SliderKnob"
+					})
+				})
+			}), "Second")
+
+			local SliderBack = SliderFrame.SliderBack
+			local SliderFill = SliderBack.SliderFill
+			local SliderKnob = SliderBack.SliderKnob
+			local ValueLabel = SliderFrame.ValueLabel
+
+			local SliderValue = SliderConfig.Default
+			local Dragging = false
+
+			local function SetSlider(Value)
+				SliderValue = math.clamp(Round(Value, SliderConfig.Increment), SliderConfig.Min, SliderConfig.Max)
+				local Percent = (SliderValue - SliderConfig.Min) / (SliderConfig.Max - SliderConfig.Min)
+				
+				SliderFill.Size = UDim2.new(Percent, 0, 1, 0)
+				SliderKnob.Position = UDim2.new(Percent, -8, 0.5, -8)
+				ValueLabel.Text = SliderValue .. SliderConfig.ValueName
+				
+				spawn(function() SliderConfig.Callback(SliderValue) end)
+			end
+
+			AddConnection(SliderKnob.InputBegan, function(Input)
+				if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+					Dragging = true
+				end
+			end)
+
+			AddConnection(SliderKnob.InputEnded, function(Input)
+				if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+					Dragging = false
+				end
+			end)
+
+			AddConnection(UserInputService.InputChanged, function(Input)
+				if Dragging and Input.UserInputType == Enum.UserInputType.MouseMovement then
+					local SizeX = SliderBack.AbsoluteSize.X
+					local Percent = math.clamp((Input.Position.X - SliderBack.AbsolutePosition.X) / SizeX, 0, 1)
+					local Value = SliderConfig.Min + ((SliderConfig.Max - SliderConfig.Min) * Percent)
+					SetSlider(Value)
+				end
+			end)
+
+			if SliderConfig.Flag then
+				OrionLib.Flags[SliderConfig.Flag] = {
+					Value = SliderConfig.Default,
+					Type = "Slider",
+					Set = SetSlider,
+					Save = SliderConfig.Save
+				}
+			end
+
+			SetSlider(SliderConfig.Default)
+
+			local SliderFunction = {}
+			function SliderFunction:Set(Value)
+				SetSlider(Value)
+			end
+
+			return SliderFunction
+		end
+
+		function ElementFunction:AddDropdown(DropdownConfig)
+			DropdownConfig = DropdownConfig or {}
+			DropdownConfig.Name = DropdownConfig.Name or "Dropdown"
+			DropdownConfig.Options = DropdownConfig.Options or {}
+			DropdownConfig.Default = DropdownConfig.Default or ""
+			DropdownConfig.Flag = DropdownConfig.Flag or nil
+			DropdownConfig.Save = DropdownConfig.Save or true
+			DropdownConfig.Callback = DropdownConfig.Callback or function() end
+
+			local DropdownFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 40),
+				Parent = Container,
+				ClipsDescendants = true
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				SetChildren(SetProps(MakeElement("Button"), {
+					Size = UDim2.new(1, 0, 0, 40)
+				}), {
+					AddThemeObject(SetProps(MakeElement("Label", DropdownConfig.Name, 14), {
+						Size = UDim2.new(1, -50, 1, 0),
+						Position = UDim2.new(0, 20, 0, 0),
+						Font = Enum.Font.GothamSemibold
+					}), "Text"),
+					AddThemeObject(SetProps(MakeElement("Label", DropdownConfig.Default, 13), {
+						Size = UDim2.new(1, -50, 1, 0),
+						Position = UDim2.new(0, 20, 0, 0),
+						Font = Enum.Font.Gotham,
+						TextXAlignment = Enum.TextXAlignment.Right,
+						Name = "ValueLabel"
+					}), "TextDark"),
+					AddThemeObject(SetProps(MakeElement("Image", "rbxassetid://7072706796"), {
+						Size = UDim2.new(0, 16, 0, 16),
+						Position = UDim2.new(1, -30, 0.5, -8),
+						Name = "Arrow"
+					}), "Text")
+				}),
+				SetChildren(SetProps(MakeElement("ScrollFrame", Color3.fromRGB(255, 255, 255), 4), {
+					Size = UDim2.new(1, 0, 0, 0),
+					Position = UDim2.new(0, 0, 0, 40),
+					Name = "DropdownContainer"
+				}), {
+					MakeElement("List", 0, 0),
+					MakeElement("Padding", 0, 0, 0, 0)
+				})
+			}), "Second")
+
+			local DropdownContainer = DropdownFrame.DropdownContainer
+			local ValueLabel = DropdownFrame.TextButton.ValueLabel
+			local Arrow = DropdownFrame.TextButton.Arrow
+
+			local DropdownValue = DropdownConfig.Default
+			local Opened = false
+
+			local function SetDropdown(Value)
+				DropdownValue = Value
+				ValueLabel.Text = Value
+				spawn(function() DropdownConfig.Callback(Value) end)
+			end
+
+			local function RefreshDropdown(Options, SetValue)
+				for _, v in next, DropdownContainer:GetChildren() do
+					if v:IsA("TextButton") then
+						v:Destroy()
+					end
+				end
+
+				for _, Option in next, Options do
+					local OptionButton = AddThemeObject(SetChildren(SetProps(MakeElement("Button"), {
+						Size = UDim2.new(1, 0, 0, 30),
+						Parent = DropdownContainer
+					}), {
+						AddThemeObject(SetProps(MakeElement("Label", Option, 13), {
+							Size = UDim2.new(1, -20, 1, 0),
+							Position = UDim2.new(0, 20, 0, 0),
+							Font = Enum.Font.Gotham
+						}), "Text")
+					}), "Second")
+
+					AddConnection(OptionButton.MouseButton1Up, function()
+						SetDropdown(Option)
+						
+						-- Close dropdown
+						Opened = false
+						TweenService:Create(DropdownFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, 40)}):Play()
+						TweenService:Create(DropdownContainer, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, 0)}):Play()
+						TweenService:Create(Arrow, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Rotation = 0}):Play()
+					end)
+				end
+
+				DropdownContainer.CanvasSize = UDim2.new(0, 0, 0, DropdownContainer.UIListLayout.AbsoluteContentSize.Y)
+
+				if SetValue then
+					SetDropdown(Options[1] or "")
+				end
+			end
+
+			AddConnection(DropdownFrame.TextButton.MouseButton1Up, function()
+				if Opened then
+					Opened = false
+					TweenService:Create(DropdownFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, 40)}):Play()
+					TweenService:Create(DropdownContainer, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, 0)}):Play()
+					TweenService:Create(Arrow, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Rotation = 0}):Play()
+				else
+					Opened = true
+					local DropdownHeight = math.clamp(DropdownContainer.UIListLayout.AbsoluteContentSize.Y, 0, 120)
+					TweenService:Create(DropdownFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, 40 + DropdownHeight)}):Play()
+					TweenService:Create(DropdownContainer, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, DropdownHeight)}):Play()
+					TweenService:Create(Arrow, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Rotation = 180}):Play()
+				end
+			end)
+
+			if DropdownConfig.Flag then
+				OrionLib.Flags[DropdownConfig.Flag] = {
+					Value = DropdownConfig.Default,
+					Type = "Dropdown",
+					Set = SetDropdown,
+					Refresh = RefreshDropdown,
+					Save = DropdownConfig.Save
+				}
+			end
+
+			RefreshDropdown(DropdownConfig.Options, true)
+
+			local DropdownFunction = {}
+			function DropdownFunction:Set(Value)
+				SetDropdown(Value)
+			end
+			function DropdownFunction:Refresh(Options, SetValue)
+				RefreshDropdown(Options, SetValue)
+			end
+
+			return DropdownFunction
+		end
+
+		function ElementFunction:AddColorpicker(ColorpickerConfig)
+			ColorpickerConfig = ColorpickerConfig or {}
+			ColorpickerConfig.Name = ColorpickerConfig.Name or "Colorpicker"
+			ColorpickerConfig.Default = ColorpickerConfig.Default or Color3.fromRGB(255, 255, 255)
+			ColorpickerConfig.Flag = ColorpickerConfig.Flag or nil
+			ColorpickerConfig.Save = ColorpickerConfig.Save or true
+			ColorpickerConfig.Callback = ColorpickerConfig.Callback or function() end
+
+			local ColorpickerFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 40),
+				Parent = Container
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				SetChildren(SetProps(MakeElement("Button"), {
+					Size = UDim2.new(1, 0, 1, 0)
+				}), {
+					AddThemeObject(SetProps(MakeElement("Label", ColorpickerConfig.Name, 14), {
+						Size = UDim2.new(1, -50, 1, 0),
+						Position = UDim2.new(0, 20, 0, 0),
+						Font = Enum.Font.GothamSemibold
+					}), "Text"),
+					SetProps(MakeElement("RoundFrame", ColorpickerConfig.Default, 0, 6), {
+						Size = UDim2.new(0, 30, 0, 20),
+						Position = UDim2.new(1, -40, 0.5, -10),
+						Name = "ColorDisplay"
+					})
+				})
+			}), "Second")
+
+			local ColorDisplay = ColorpickerFrame.TextButton.ColorDisplay
+			local ColorValue = ColorpickerConfig.Default
+
+			local function SetColor(Color)
+				ColorValue = Color
+				ColorDisplay.BackgroundColor3 = Color
+				spawn(function() ColorpickerConfig.Callback(Color) end)
+			end
+
+			-- Simple color picker implementation
+			AddConnection(ColorpickerFrame.TextButton.MouseButton1Up, function()
+				-- This would open a color picker window
+				-- For now, just cycle through some colors
+				local Colors = {
+					Color3.fromRGB(255, 0, 0),
+					Color3.fromRGB(0, 255, 0),
+					Color3.fromRGB(0, 0, 255),
+					Color3.fromRGB(255, 255, 0),
+					Color3.fromRGB(255, 0, 255),
+					Color3.fromRGB(0, 255, 255),
+					Color3.fromRGB(255, 255, 255)
+				}
+				
+				local CurrentIndex = 1
+				for i, Color in ipairs(Colors) do
+					if Color == ColorValue then
+						CurrentIndex = i
+						break
+					end
+				end
+				
+				local NextIndex = (CurrentIndex % #Colors) + 1
+				SetColor(Colors[NextIndex])
+			end)
+
+			if ColorpickerConfig.Flag then
+				OrionLib.Flags[ColorpickerConfig.Flag] = {
+					Value = ColorpickerConfig.Default,
+					Type = "Colorpicker",
+					Set = SetColor,
+					Save = ColorpickerConfig.Save
+				}
+			end
+
+			local ColorpickerFunction = {}
+			function ColorpickerFunction:Set(Color)
+				SetColor(Color)
+			end
+
+			return ColorpickerFunction
+		end
+
+		function ElementFunction:AddTextbox(TextboxConfig)
+			TextboxConfig = TextboxConfig or {}
+			TextboxConfig.Name = TextboxConfig.Name or "Textbox"
+			TextboxConfig.Default = TextboxConfig.Default or ""
+			TextboxConfig.TextDisappear = TextboxConfig.TextDisappear or false
+			TextboxConfig.Flag = TextboxConfig.Flag or nil
+			TextboxConfig.Save = TextboxConfig.Save or true
+			TextboxConfig.Callback = TextboxConfig.Callback or function() end
+
+			local TextboxFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 40),
+				Parent = Container
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				AddThemeObject(SetProps(MakeElement("Label", TextboxConfig.Name, 14), {
+					Size = UDim2.new(0.5, -10, 1, 0),
+					Position = UDim2.new(0, 20, 0, 0),
+					Font = Enum.Font.GothamSemibold
+				}), "Text"),
+				AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(255, 255, 255), 0, 6), {
+					Size = UDim2.new(0.5, -10, 0, 25),
+					Position = UDim2.new(0.5, 5, 0.5, -12.5),
+					Name = "TextboxBack"
+				}), {
+					AddThemeObject(MakeElement("Stroke"), "Stroke"),
+					SetProps(Create("TextBox", {
+						Size = UDim2.new(1, -10, 1, 0),
+						Position = UDim2.new(0, 5, 0, 0),
+						BackgroundTransparency = 1,
+						Text = TextboxConfig.Default,
+						TextSize = 13,
+						Font = Enum.Font.Gotham,
+						PlaceholderText = "Enter text...",
+						ClearTextOnFocus = TextboxConfig.TextDisappear,
+						Name = "Textbox"
+					}), {})
+				}), "Second")
+			}), "Second")
+
+			local Textbox = TextboxFrame.TextboxBack.Textbox
+			AddThemeObject(Textbox, "Text")
+
+			local function SetTextbox(Text)
+				Textbox.Text = Text
+				spawn(function() TextboxConfig.Callback(Text) end)
+			end
+
+			AddConnection(Textbox.FocusLost, function(EnterPressed)
+				if EnterPressed then
+					SetTextbox(Textbox.Text)
+				end
+			end)
+
+			if TextboxConfig.Flag then
+				OrionLib.Flags[TextboxConfig.Flag] = {
+					Value = TextboxConfig.Default,
+					Type = "Textbox",
+					Set = SetTextbox,
+					Save = TextboxConfig.Save
+				}
+			end
+
+			local TextboxFunction = {}
+			function TextboxFunction:Set(Text)
+				SetTextbox(Text)
+			end
+
+			return TextboxFunction
+		end
+
+		function ElementFunction:AddBind(BindConfig)
+			BindConfig = BindConfig or {}
+			BindConfig.Name = BindConfig.Name or "Bind"
+			BindConfig.Default = BindConfig.Default or Enum.KeyCode.E
+			BindConfig.Hold = BindConfig.Hold or false
+			BindConfig.Flag = BindConfig.Flag or nil
+			BindConfig.Save = BindConfig.Save or true
+			BindConfig.Callback = BindConfig.Callback or function() end
+
+			local BindFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 40),
+				Parent = Container
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				SetChildren(SetProps(MakeElement("Button"), {
+					Size = UDim2.new(1, 0, 1, 0)
+				}), {
+					AddThemeObject(SetProps(MakeElement("Label", BindConfig.Name, 14), {
+						Size = UDim2.new(1, -100, 1, 0),
+						Position = UDim2.new(0, 20, 0, 0),
+						Font = Enum.Font.GothamSemibold
+					}), "Text"),
+					AddThemeObject(SetProps(MakeElement("Label", "[" .. BindConfig.Default.Name .. "]", 13), {
+						Size = UDim2.new(0, 80, 1, 0),
+						Position = UDim2.new(1, -90, 0, 0),
+						Font = Enum.Font.Gotham,
+						TextXAlignment = Enum.TextXAlignment.Right,
+						Name = "BindLabel"
+					}), "TextDark")
+				})
+			}), "Second")
+
+			local BindLabel = BindFrame.TextButton.BindLabel
+			local CurrentBind = BindConfig.Default
+			local Binding = false
+
+			local function SetBind(Key)
+				CurrentBind = Key
+				BindLabel.Text = "[" .. Key.Name .. "]"
+			end
+
+			AddConnection(BindFrame.TextButton.MouseButton1Up, function()
+				if not Binding then
+					Binding = true
+					BindLabel.Text = "[...]"
+					
+					local Connection
+					Connection = AddConnection(UserInputService.InputBegan, function(Input, GameProcessed)
+						if not GameProcessed then
+							if not CheckKey(BlacklistedKeys, Input.KeyCode) then
+								SetBind(Input.KeyCode)
+								Binding = false
+								Connection:Disconnect()
+							end
+						end
+					end)
+				end
+			end)
+
+			AddConnection(UserInputService.InputBegan, function(Input, GameProcessed)
+				if not GameProcessed and Input.KeyCode == CurrentBind then
+					if BindConfig.Hold then
+						spawn(function() BindConfig.Callback(true) end)
+					else
+						spawn(function() BindConfig.Callback() end)
+					end
+				end
+			end)
+
+			if BindConfig.Hold then
+				AddConnection(UserInputService.InputEnded, function(Input, GameProcessed)
+					if not GameProcessed and Input.KeyCode == CurrentBind then
+						spawn(function() BindConfig.Callback(false) end)
+					end
+				end)
+			end
+
+			if BindConfig.Flag then
+				OrionLib.Flags[BindConfig.Flag] = {
+					Value = BindConfig.Default,
+					Type = "Bind",
+					Set = SetBind,
+					Save = BindConfig.Save
+				}
+			end
+
+			local BindFunction = {}
+			function BindFunction:Set(Key)
+				SetBind(Key)
+			end
+
+			return BindFunction
+		end
+
+		function ElementFunction:AddLabel(LabelConfig)
+			LabelConfig = LabelConfig or {}
+			LabelConfig.Name = LabelConfig.Name or "Label"
+
+			local LabelFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 40),
+				Parent = Container
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				AddThemeObject(SetProps(MakeElement("Label", LabelConfig.Name, 14), {
+					Size = UDim2.new(1, -20, 1, 0),
+					Position = UDim2.new(0, 20, 0, 0),
+					Font = Enum.Font.GothamSemibold,
+					Name = "LabelText"
+				}), "Text")
+			}), "Second")
+
+			local LabelText = LabelFrame.LabelText
+
+			local LabelFunction = {}
+			function LabelFunction:Set(Text)
+				LabelText.Text = Text
+			end
+
+			return LabelFunction
+		end
+
+		function ElementFunction:AddParagraph(ParagraphConfig)
+			ParagraphConfig = ParagraphConfig or {}
+			ParagraphConfig.Title = ParagraphConfig.Title or "Paragraph"
+			ParagraphConfig.Content = ParagraphConfig.Content or "Content"
+
+			local ParagraphFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 60),
+				Parent = Container
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				AddThemeObject(SetProps(MakeElement("Label", ParagraphConfig.Title, 14), {
+					Size = UDim2.new(1, -20, 0, 20),
+					Position = UDim2.new(0, 20, 0, 5),
+					Font = Enum.Font.GothamSemibold,
+					Name = "Title"
+				}), "Text"),
+				AddThemeObject(SetProps(MakeElement("Label", ParagraphConfig.Content, 13), {
+					Size = UDim2.new(1, -20, 0, 30),
+					Position = UDim2.new(0, 20, 0, 25),
+					Font = Enum.Font.Gotham,
+					TextWrapped = true,
+					Name = "Content"
+				}), "TextDark")
+			}), "Second")
+
+			local Title = ParagraphFrame.Title
+			local Content = ParagraphFrame.Content
+
+			local ParagraphFunction = {}
+			function ParagraphFunction:Set(TitleText, ContentText)
+				Title.Text = TitleText
+				Content.Text = ContentText
+			end
+
+			return ParagraphFunction
+		end
+
+		-- MultiSelect Element Implementation
+		function ElementFunction:AddMultiSelect(MultiSelectConfig)
+			MultiSelectConfig = MultiSelectConfig or {}
+			MultiSelectConfig.Name = MultiSelectConfig.Name or "MultiSelect"
+			MultiSelectConfig.Options = MultiSelectConfig.Options or {}
+			MultiSelectConfig.Default = MultiSelectConfig.Default or {}
+			MultiSelectConfig.Flag = MultiSelectConfig.Flag or nil
+			MultiSelectConfig.Save = MultiSelectConfig.Save or true
+			MultiSelectConfig.Callback = MultiSelectConfig.Callback or function() end
+
+			local MultiSelectFrame = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame"), {
+				Size = UDim2.new(1, 0, 0, 40),
+				Parent = Container,
+				ClipsDescendants = true
+			}), {
+				AddThemeObject(MakeElement("Stroke"), "Stroke"),
+				SetChildren(SetProps(MakeElement("Button"), {
+					Size = UDim2.new(1, 0, 0, 40)
+				}), {
+					AddThemeObject(SetProps(MakeElement("Label", MultiSelectConfig.Name, 14), {
+						Size = UDim2.new(1, -50, 1, 0),
+						Position = UDim2.new(0, 20, 0, 0),
+						Font = Enum.Font.GothamSemibold
+					}), "Text"),
+					AddThemeObject(SetProps(MakeElement("Label", "None", 13), {
+						Size = UDim2.new(1, -50, 1, 0),
+						Position = UDim2.new(0, 20, 0, 0),
+						Font = Enum.Font.Gotham,
+						TextXAlignment = Enum.TextXAlignment.Right,
+						Name = "ValueLabel"
+					}), "TextDark"),
+					AddThemeObject(SetProps(MakeElement("Image", "rbxassetid://7072706796"), {
+						Size = UDim2.new(0, 16, 0, 16),
+						Position = UDim2.new(1, -30, 0.5, -8),
+						Name = "Arrow"
+					}), "Text")
+				}),
+				SetChildren(SetProps(MakeElement("ScrollFrame", Color3.fromRGB(255, 255, 255), 4), {
+					Size = UDim2.new(1, 0, 0, 0),
+					Position = UDim2.new(0, 0, 0, 40),
+					Name = "MultiSelectContainer"
+				}), {
+					MakeElement("List", 0, 0),
+					MakeElement("Padding", 0, 0, 0, 0)
+				})
+			}), "Second")
+
+			local MultiSelectContainer = MultiSelectFrame.MultiSelectContainer
+			local ValueLabel = MultiSelectFrame.TextButton.ValueLabel
+			local Arrow = MultiSelectFrame.TextButton.Arrow
+
+			local SelectedValues = {}
+			local Opened = false
+
+			-- Initialize with default values
+			for _, value in ipairs(MultiSelectConfig.Default) do
+				SelectedValues[value] = true
+			end
+
+			local function UpdateValueLabel()
+				local selectedList = {}
+				for value, selected in pairs(SelectedValues) do
+					if selected then
+						table.insert(selectedList, value)
+					end
+				end
+				
+				if #selectedList == 0 then
+					ValueLabel.Text = "None"
+				elseif #selectedList == 1 then
+					ValueLabel.Text = selectedList[1]
+				else
+					ValueLabel.Text = #selectedList .. " selected"
+				end
+			end
+
+			local function SetMultiSelect(Values)
+				SelectedValues = {}
+				for _, value in ipairs(Values) do
+					SelectedValues[value] = true
+				end
+				UpdateValueLabel()
+				spawn(function() MultiSelectConfig.Callback(Values) end)
+			end
+
+			local function RefreshMultiSelect(Options, ClearSelection)
+				-- Clear existing options
+				for _, v in next, MultiSelectContainer:GetChildren() do
+					if v:IsA("TextButton") then
+						v:Destroy()
+					end
+				end
+
+				-- Clear selection if requested
+				if ClearSelection then
+					SelectedValues = {}
+				end
+
+				-- Create new option buttons
+				for _, Option in next, Options do
+					local OptionButton = AddThemeObject(SetChildren(SetProps(MakeElement("Button"), {
+						Size = UDim2.new(1, 0, 0, 30),
+						Parent = MultiSelectContainer
+					}), {
+						AddThemeObject(SetProps(MakeElement("Label", Option, 13), {
+							Size = UDim2.new(1, -40, 1, 0),
+							Position = UDim2.new(0, 20, 0, 0),
+							Font = Enum.Font.Gotham
+						}), "Text"),
+						SetProps(MakeElement("RoundFrame", Color3.fromRGB(255, 255, 255), 0, 3), {
+							Size = UDim2.new(0, 16, 0, 16),
+							Position = UDim2.new(1, -30, 0.5, -8),
+							Name = "Checkbox"
+						})
+					}), "Second")
+
+					local Checkbox = OptionButton.Checkbox
+					local CheckboxStroke = AddThemeObject(MakeElement("Stroke"), "Stroke")
+					CheckboxStroke.Parent = Checkbox
+
+					-- Create checkmark
+					local Checkmark = AddThemeObject(SetProps(MakeElement("Label", "✓", 12), {
+						Size = UDim2.new(1, 0, 1, 0),
+						BackgroundTransparency = 1,
+						Font = Enum.Font.GothamBold,
+						TextXAlignment = Enum.TextXAlignment.Center,
+						TextYAlignment = Enum.TextYAlignment.Center,
+						Visible = SelectedValues[Option] or false
+					}), "Text")
+					Checkmark.Parent = Checkbox
+
+					-- Update checkbox appearance
+					local function UpdateCheckbox()
+						if SelectedValues[Option] then
+							Checkbox.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
+							Checkmark.Visible = true
+						else
+							Checkbox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+							Checkmark.Visible = false
+						end
+					end
+
+					UpdateCheckbox()
+
+					AddConnection(OptionButton.MouseButton1Up, function()
+						SelectedValues[Option] = not SelectedValues[Option]
+						UpdateCheckbox()
+						UpdateValueLabel()
+						
+						-- Get current selected values
+						local currentSelected = {}
+						for value, selected in pairs(SelectedValues) do
+							if selected then
+								table.insert(currentSelected, value)
+							end
+						end
+						
+						spawn(function() MultiSelectConfig.Callback(currentSelected) end)
+					end)
+				end
+
+				MultiSelectContainer.CanvasSize = UDim2.new(0, 0, 0, MultiSelectContainer.UIListLayout.AbsoluteContentSize.Y)
+				UpdateValueLabel()
+			end
+
+			AddConnection(MultiSelectFrame.TextButton.MouseButton1Up, function()
+				if Opened then
+					Opened = false
+					TweenService:Create(MultiSelectFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, 40)}):Play()
+					TweenService:Create(MultiSelectContainer, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, 0)}):Play()
+					TweenService:Create(Arrow, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Rotation = 0}):Play()
+				else
+					Opened = true
+					local MultiSelectHeight = math.clamp(MultiSelectContainer.UIListLayout.AbsoluteContentSize.Y, 0, 120)
+					TweenService:Create(MultiSelectFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, 40 + MultiSelectHeight)}):Play()
+					TweenService:Create(MultiSelectContainer, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1, 0, 0, MultiSelectHeight)}):Play()
+					TweenService:Create(Arrow, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Rotation = 180}):Play()
+				end
+			end)
+
+			if MultiSelectConfig.Flag then
+				OrionLib.Flags[MultiSelectConfig.Flag] = {
+					Value = MultiSelectConfig.Default,
+					Type = "MultiSelect",
+					Set = SetMultiSelect,
+					Refresh = RefreshMultiSelect,
+					Save = MultiSelectConfig.Save
+				}
+			end
+
+			RefreshMultiSelect(MultiSelectConfig.Options, false)
+
+			local MultiSelectFunction = {}
+			function MultiSelectFunction:Set(Values)
+				SetMultiSelect(Values)
+			end
+			function MultiSelectFunction:Refresh(Options, ClearSelection)
+				RefreshMultiSelect(Options, ClearSelection)
+			end
+
+			return MultiSelectFunction
+		end
+
+		return ElementFunction
+	end
+
+	return TabFunction
+end
+
+function OrionLib:Destroy()
+	Orion:Destroy()
+end
+
+function OrionLib:SetTheme(ThemeName)
+	if OrionLib.Themes[ThemeName] then
+		OrionLib.SelectedTheme = ThemeName
+		SetTheme()
+	end
+end
+
+-- Initialize the library
+OrionLib:Init()
+
+return OrionLib
